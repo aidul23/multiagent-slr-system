@@ -1,0 +1,23 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.log
+
+# Virtual environment
+venv/
+.env
+
+# User uploads and generated content
+uploads/
+data/
+datapdf/
+datatxt/
+dataembedding/
+
+# FAISS index and numpy files
+*.npy
+*.index
+
+# VSCode/IDE config
+.vscode/
+.idea/
