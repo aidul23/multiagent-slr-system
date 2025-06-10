@@ -33,13 +33,17 @@ export default function ProjectPhase1Page() {
   const [isGeneratingSearchString, setIsGeneratingSearchString] = useState(false);
   const [searchString, setSearchString] = useState("")
   const [yearMode, setYearMode] = useState("range");
-  const [yearRange, setYearRange] = useState({ start: "2018", end: "2023" })
+  const [yearRange, setYearRange] = useState({ start: 2018, end: 2023 })
   const [dataSources, setDataSources] = useState(["IEEE", "Elsevier"])
   const [isPeerReviewed, setIsPeerReviewed] = useState(true)
+  const [isEnglish, setIsEnglish] = useState(true)
   const [sortBy, setSortBy] = useState("relevance")
   const [limit, setLimit] = useState(100);
   const [papers, setPapers] = useState([]);
   const [loadingPapers, setLoadingPapers] = useState(false);
+
+  const [loadingObjective, setLoadingObjective] = useState(false);
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
 
   const [questionsWithPurposes, setQuestionsWithPurposes] = useState([]); // [{question: ..., purpose: ...}]
   const [selectedQuestions, setSelectedQuestions] = useState([]); // Selected confirmed questions
@@ -53,47 +57,6 @@ export default function ProjectPhase1Page() {
 
   const steps = ["Research Objective", "Research Questions", "Search Criteria", "Paper Retrieval"]
 
-  // useEffect(() => {
-  //   // Check if user is logged in
-  //   const userData = localStorage.getItem("user")
-  //   if (!userData) {
-  //     router.push("/login")
-  //     return
-  //   }
-
-  //   // Load project data
-  //   const savedProjects = localStorage.getItem("projects")
-  //   if (savedProjects) {
-  //     const projects = JSON.parse(savedProjects)
-  //     const currentProject = projects.find((p) => p.id === projectId)
-  //     if (currentProject) {
-  //       setProject(currentProject)
-  //     } else {
-  //       router.push("/dashboard")
-  //     }
-  //   } else {
-  //     router.push("/dashboard")
-  //   }
-
-  //   // Load project phase data if exists
-  //   const phaseData = localStorage.getItem(`project_${projectId}_phase1`)
-  //   if (phaseData) {
-  //     const data = JSON.parse(phaseData)
-  //     setCurrentStep(data.currentStep || 0)
-  //     setObjective(data.objective || "")
-  //     setPrompt(data.prompt || "")
-  //     setQuestions(data.questions || [])
-  //     setLockedQuestions(data.lockedQuestions || [])
-  //     setSearchString(data.searchString || "")
-  //     setYearRange(data.yearRange || { start: "2018", end: "2023" })
-  //     setDataSources(data.dataSources || ["IEEE", "Elsevier"])
-  //     setIsPeerReviewed(data.isPeerReviewed !== undefined ? data.isPeerReviewed : true)
-  //     setSortBy(data.sortBy || "relevance")
-  //     setObjectiveModel(data.objectiveModel || "gpt-4o")
-  //     setQuestionsModel(data.questionsModel || "gpt-4o")
-  //     setSearchStringModel(data.searchStringModel || "gpt-4o")
-  //   }
-  // }, [projectId, router])
 
   useEffect(() => {
     const fetchProject = async () => {
@@ -199,15 +162,16 @@ export default function ProjectPhase1Page() {
 
   const handleGenerateObjective = async () => {
     if (!prompt.trim()) return;
+    setLoadingObjective(true);
 
     try {
       const response = await axios.post('http://127.0.0.1:5000/api/generate_objective', {
         prompt: prompt,
-        model: objectiveModel, // you are already storing model selection in state
+        model: objectiveModel,
       });
 
       if (response.status === 200) {
-        const generatedObjective = response.data.research_objective; // Assuming your API returns { "objective": "..." }
+        const generatedObjective = response.data.research_objective;
         setObjective(generatedObjective.replace("Research Objective:\n", "").trim());
         setCurrentStep(1);
       } else {
@@ -215,8 +179,11 @@ export default function ProjectPhase1Page() {
       }
     } catch (error) {
       console.error('Error generating objective:', error.response?.data || error.message);
+    } finally {
+      setLoadingObjective(false);
     }
   };
+
 
 
   const handleGenerateQuestions = async () => {
@@ -225,8 +192,9 @@ export default function ProjectPhase1Page() {
       return;
     }
 
+    setLoadingQuestions(true);
+
     try {
-      // Reset previous
       setQuestions([]);
       setLockedQuestions([]);
       setQuestionsWithPurposes([]);
@@ -239,26 +207,26 @@ export default function ProjectPhase1Page() {
 
       const data = response.data;
 
-      if (data && data.research_questions && data.research_questions.research_questions) {
+      if (data && data.research_questions?.research_questions) {
         const processedQuestions = data.research_questions.research_questions.map((item, index) => ({
           question: item.question,
-          purpose: item.purpose.replace(/^[-\s]*Purpose:\s*/, ""), // Clean "- Purpose: "
+          purpose: item.purpose.replace(/^[-\s]*Purpose:\s*/, ""),
           id: index,
         }));
 
         setQuestionsWithPurposes(processedQuestions);
         setCurrentStep(2);
-
-        console.log("Processed Questions with Purpose:", processedQuestions);
       } else {
-        console.error("Invalid response format:", data);
-        alert("Failed to generate research questions. Please try again.");
+        alert("Failed to generate research questions.");
       }
     } catch (error) {
       console.error("Error generating questions:", error);
       alert("An error occurred while generating research questions.");
+    } finally {
+      setLoadingQuestions(false);
     }
   };
+
 
 
   const handleConfirmQuestions = async () => {
@@ -471,8 +439,15 @@ export default function ProjectPhase1Page() {
                 </div>
               </CardContent>
               <CardFooter className="flex justify-end">
-                <Button onClick={handleGenerateObjective} disabled={!prompt.trim()} className="gap-2">
-                  <Sparkles className="h-4 w-4" />
+                <Button onClick={handleGenerateObjective} disabled={!prompt.trim() || loadingObjective} className="gap-2">
+                  {loadingObjective ? (
+                    <svg className="animate-spin h-4 w-4 text-gray-600" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                  ) : (
+                    <Sparkles className="h-4 w-4" />
+                  )}
                   Generate Objective
                 </Button>
               </CardFooter>
@@ -530,8 +505,15 @@ export default function ProjectPhase1Page() {
                   Back
                 </Button>
                 {!lockedConfirmed && (
-                  <Button onClick={handleGenerateQuestions} className="gap-2">
-                    <Sparkles className="h-4 w-4" />
+                  <Button onClick={handleGenerateQuestions} disabled={loadingQuestions} className="gap-2">
+                    {loadingQuestions ? (
+                      <svg className="animate-spin h-4 w-4 text-gray-600" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
                     Generate Questions
                   </Button>
                 )}
@@ -725,6 +707,14 @@ export default function ProjectPhase1Page() {
                         onCheckedChange={(checked) => setIsPeerReviewed(checked)}
                       />
                       <Label htmlFor="peerReviewed">Peer-reviewed only</Label>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <Checkbox
+                        id="isEnglish"
+                        checked={isEnglish}
+                        onCheckedChange={(checked) => setIsEnglish(checked)}
+                      />
+                      <Label htmlFor="isEnglish">Only English</Label>
                     </div>
                   </div>
 

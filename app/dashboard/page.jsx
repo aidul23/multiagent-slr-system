@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { UserNav } from "@/components/user-nav"
-import { Plus, FileText, Calendar, ArrowRight } from "lucide-react"
+import { Plus, FileText, Calendar, ArrowRight, Trash2 } from "lucide-react"
 import axios from 'axios';
 
 export default function DashboardPage() {
@@ -75,6 +75,9 @@ export default function DashboardPage() {
 
       const parsedUser = JSON.parse(userData);
 
+      console.log(parsedUser);
+      
+
       // Prepare payload
       const payload = {
         user_id: parsedUser.id,
@@ -100,6 +103,23 @@ export default function DashboardPage() {
     }
   };
 
+  const handleDeleteProject = async (projectIdToDelete) => {
+    if (!confirm("Are you sure you want to delete this project? This action cannot be undone.")) return;
+
+    try {
+      const response = await axios.delete(`http://127.0.0.1:5000/api/delete_project/${projectIdToDelete}`);
+      if (response.status === 200) {
+        // Remove from local state
+        setProjects((prev) => prev.filter((p) => p.project_id !== projectIdToDelete));
+      } else {
+        alert(response.data.error || "Failed to delete project.");
+      }
+    } catch (err) {
+      console.error("Delete error:", err);
+      alert("Something went wrong during deletion.");
+    }
+  };
+
 
   const formatDate = (dateString) => {
     const options = { year: "numeric", month: "long", day: "numeric" }
@@ -119,7 +139,7 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <main className="flex-1 container px-4 py-8 sm:px-6 w-full">
+      <main className="flex-1 px-4 py-8 sm:px-6 w-full">
         <div className="flex items-center justify-between mb-8">
           <div>
             <h2 className="text-3xl font-bold tracking-tight">Projects</h2>
@@ -196,18 +216,27 @@ export default function DashboardPage() {
                   <p className="text-sm text-gray-500 line-clamp-3">{project.description}</p>
                 </CardContent>
 
-                <CardFooter className="pt-3">
-                  <Link href={`/projects/${project.project_id}/phase1`} className="w-full">
+                <CardFooter className="pt-3 flex justify-between items-center">
+                  <Link href={`/projects/${project.project_id}/phase1`} className="w-full mr-2">
                     <Button className="w-full gap-2">
                       Open Project
                       <ArrowRight className="h-4 w-4" />
                     </Button>
                   </Link>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleDeleteProject(project.project_id)}
+                    className="text-red-500 hover:bg-red-100 transition-colors"
+                    title="Delete project"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
                 </CardFooter>
+
               </Card>
             ))}
           </div>
-
         )}
       </main>
 

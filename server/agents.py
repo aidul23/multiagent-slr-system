@@ -212,14 +212,46 @@ def generate_research_report(project_id, research_questions, model="gpt-4"):
     questions_text = "\n".join([f"- {q}" for q in research_questions])
 
     prompt_text = f"""
-    You are an expert research analyst. Below are abstracts from multiple research papers:
+    You are an expert in conducting systematic literature reviews (SLRs). Based on the following collection of paper abstracts, generate a well-structured academic report.
 
-    {abstracts_text}
+    ### Research Context:
+    - These abstracts are from peer-reviewed research papers related to a common topic.
 
-    Based on these abstracts, please answer the following research questions:
+    ### Research Questions:
     {questions_text}
 
-    Provide a structured and insightful report summarizing key findings, trends, and insights.
+    ### Paper Abstracts:
+    {abstracts_text}
+
+    ---
+
+    ### TASK:
+
+    Generate a detailed, structured SLR report using the following format:
+
+    1. **Introduction**
+    - Briefly introduce the topic and its relevance.
+    - Mention the motivation for conducting this review.
+
+    2. **Research Objectives**
+    - State the goals of this SLR based on the provided research questions.
+
+    3. **Summary of Literature**
+    - Summarize trends, common themes, and key findings from the abstracts.
+    - Mention important techniques, datasets, or insights observed.
+
+    4. **Discussion**
+    - Discuss any notable gaps, contradictions, or opportunities identified.
+    - Compare methods or results if mentioned.
+
+    5. **Answers to Research Questions**
+    - Provide clear, concise answers to each question, labeled as RQ1, RQ2, etc.
+
+    6. **Conclusion**
+    - Summarize the insights gained.
+    - Suggest future directions or remaining challenges.
+
+    Ensure that your output is academically styled, uses clear headings, and remains concise but comprehensive. Avoid quoting entire abstracts. Instead, synthesize the content to demonstrate insight.
     """
 
     headers = {

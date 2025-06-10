@@ -22,19 +22,39 @@ export default function ProjectPhase3Page() {
 
   const [project, setProject] = useState(null)
   const [currentStep, setCurrentStep] = useState(0)
+  const [generatedReport, setGeneratedReport] = useState("")
   const [reportGenerated, setReportGenerated] = useState(false)
   const [query, setQuery] = useState("")
-  const [chatHistory, setChatHistory] = useState([
-    { role: "system", content: "Welcome to the SLR Assistant. You can ask questions about your research papers." },
-  ])
-  const [reportModel, setReportModel] = useState("gpt-4o")
-  const [queryModel, setQueryModel] = useState("gpt-4o")
+  const [chatHistory, setChatHistory] = useState([])
+  const [reportModel, setReportModel] = useState("gpt-3.5-turbo")
+  const [queryModel, setQueryModel] = useState("gpt-3.5-turbo")
   const [extractedData, setExtractedData] = useState([])
   const [extractionFields, setExtractionFields] = useState([])
   const [researchQuestions, setResearchQuestions] = useState([])
   const [rqAnswers, setRqAnswers] = useState([])
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [isThinking, setIsThinking] = useState(false)
 
-  const steps = ["Report Generation", "Research Questions", "Interactive Query"]
+
+  const steps = ["Report Generation", "Interactive Query"]
+
+  const renderFormattedReport = (text) => {
+    const sections = text.split(/\*\*(.*?)\*\*/).filter(Boolean); // Split on **...**
+
+    const output = [];
+    for (let i = 0; i < sections.length; i += 2) {
+      const title = sections[i].trim();       // e.g. 1. Introduction
+      const body = (sections[i + 1] || "").trim();  // next content block
+
+      output.push(
+        <div key={i} className="mb-6">
+          <h2 className="text-xl font-bold mb-2">{title}</h2>
+          <p className="text-gray-800 whitespace-pre-line">{body}</p>
+        </div>
+      );
+    }
+    return output;
+  };
 
   useEffect(() => {
     // Check if user is logged in
@@ -83,24 +103,41 @@ export default function ProjectPhase3Page() {
 
     // Load project phase data if exists
     const phaseData = localStorage.getItem(`project_${projectId}_phase3`)
+    console.log("🔍 Phase 3 LocalStorage:", phaseData)
+
     if (phaseData) {
-      const data = JSON.parse(phaseData)
-      setCurrentStep(data.currentStep || 0)
-      setReportGenerated(data.reportGenerated || false)
-      setChatHistory(
-        data.chatHistory || [
-          {
-            role: "system",
-            content: "Welcome to the SLR Assistant. You can ask questions about your research papers.",
-          },
-        ],
-      )
-      setReportModel(data.reportModel || "gpt-4o")
-      setQueryModel(data.queryModel || "gpt-4o")
-      if (data.rqAnswers) {
-        setRqAnswers(data.rqAnswers)
+      try {
+        const data = JSON.parse(phaseData);
+        // Always maintain existing chatHistory if it exists in state
+        setChatHistory(prev =>
+          data.chatHistory?.length
+            ? data.chatHistory
+            : prev.length
+              ? prev
+              : [{ role: "system", content: "Welcome to the SLR Assistant..." }]
+        );
+        setCurrentStep(data.currentStep || 0);
+        setReportModel(data.reportModel || "gpt-4o");
+        setQueryModel(data.queryModel || "gpt-4o");
+        if (data.rqAnswers) {
+          setRqAnswers(data.rqAnswers);
+        }
+      } catch (e) {
+        console.error("Failed to parse phase data:", e);
+        // Maintain existing chat history if parse fails
+        setChatHistory(prev => prev.length ? prev : [{ role: "system", content: "Welcome..." }]);
       }
+    } else {
+      // Only set default if no history exists at all
+      setChatHistory(prev => prev.length ? prev : [{ role: "system", content: "Welcome..." }]);
     }
+
+    const savedReport = localStorage.getItem(`project_${projectId}_report`)
+    if (savedReport) {
+      setGeneratedReport(JSON.parse(savedReport))
+      setReportGenerated(true)
+    }
+
   }, [projectId, router])
 
   // Save phase data when it changes
@@ -113,6 +150,7 @@ export default function ProjectPhase3Page() {
         reportModel,
         queryModel,
         rqAnswers,
+        generatedReport
       }
       localStorage.setItem(`project_${projectId}_phase3`, JSON.stringify(phaseData))
 
@@ -143,15 +181,40 @@ export default function ProjectPhase3Page() {
 
       fetchProject();
     }
-  }, [projectId, currentStep, reportGenerated, chatHistory, reportModel, queryModel, rqAnswers])
+  }, [projectId, currentStep, reportGenerated, chatHistory, reportModel, queryModel, rqAnswers, generatedReport])
 
-  const handleGenerateReport = () => {
-    // Simulate report generation
-    setTimeout(() => {
-      setReportGenerated(true)
-      setCurrentStep(1)
-    }, 2000)
-  }
+
+  const handleGenerateReport = async () => {
+
+    setIsGenerating(true)
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/generate_report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          research_questions: researchQuestions,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "Failed to generate report");
+        return;
+      }
+
+      const data = await res.json();
+      // Save the report in state or localStorage if needed
+      setGeneratedReport(data.report)
+      localStorage.setItem(`project_${projectId}_report`, JSON.stringify(data.report));
+      setReportGenerated(true);
+    } catch (err) {
+      console.error("Report generation failed:", err)
+    } finally {
+      setIsGenerating(false)
+    }
+  };
+
 
   const handleGenerateRQAnswers = () => {
     // Simulate generating answers to research questions
@@ -172,89 +235,48 @@ export default function ProjectPhase3Page() {
     }, 2000)
   }
 
-  const handleSendQuery = () => {
-    if (!query.trim()) return
+  const handleSendQuery = async () => {
+    if (!query.trim()) return;
 
-    // Add user message to chat
-    setChatHistory([...chatHistory, { role: "user", content: query }])
+    const userMessage = { role: "user", content: query };
+    const thinkingMessage = { role: "system", content: "Thinking..." };
 
-    // Simulate AI response
-    setTimeout(() => {
-      const responses = [
-        "Based on the analyzed papers, AI techniques for SLR automation primarily include natural language processing, machine learning classifiers, and deep learning models. The most common approach is using NLP for initial screening of papers.",
-        "The research indicates that AI-based SLR tools can reduce the time required for literature reviews by 30-70% compared to traditional manual methods, depending on the domain and specific tasks.",
-        "According to the papers, the main challenges in AI-based SLR automation include handling domain-specific terminology, ensuring high recall rates, and maintaining transparency in the selection process.",
-      ]
+    setChatHistory((prev) => [...prev, userMessage, thinkingMessage]);
+    setQuery("");
+    setIsThinking(true);
 
-      // Select a response based on query content
-      let responseIndex = 0
-      if (query.toLowerCase().includes("effective") || query.toLowerCase().includes("comparison")) {
-        responseIndex = 1
-      } else if (query.toLowerCase().includes("challenge") || query.toLowerCase().includes("limitation")) {
-        responseIndex = 2
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/rag_chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId, query }),
+      });
+
+      const data = await res.json();
+
+      if (data.answer) {
+        // Replace the "Thinking..." message with the actual response
+        setChatHistory((prev) => [
+          ...prev.slice(0, -1), // remove "Thinking..."
+          { role: "system", content: data.answer },
+        ]);
+      } else {
+        setChatHistory((prev) => [
+          ...prev.slice(0, -1),
+          { role: "system", content: "Error: Could not get a response." },
+        ]);
       }
+    } catch (err) {
+      console.error("Failed to get response:", err);
+      setChatHistory((prev) => [
+        ...prev.slice(0, -1),
+        { role: "system", content: "Something went wrong. Please try again." },
+      ]);
+    } finally {
+      setIsThinking(false);
+    }
+  };
 
-      setChatHistory([
-        ...chatHistory,
-        { role: "user", content: query },
-        { role: "system", content: responses[responseIndex] },
-      ])
-      setQuery("")
-    }, 1500)
-  }
-
-  // Generate sample data for charts if no extracted data is available
-  const getSampleData = () => {
-    if (extractedData.length > 0) return extractedData
-
-    return [
-      {
-        id: "1",
-        paperTitle: "Paper 1",
-        1: "Smith et al.",
-        2: 2022,
-        3: "Qualitative",
-        4: 150,
-        5: "AI techniques significantly reduce SLR time by 40-60%",
-      },
-      {
-        id: "2",
-        paperTitle: "Paper 2",
-        1: "Johnson et al.",
-        2: 2021,
-        3: "Quantitative",
-        4: 250,
-        5: "NLP methods show 85% accuracy in initial paper screening",
-      },
-      {
-        id: "3",
-        paperTitle: "Paper 3",
-        1: "Williams et al.",
-        2: 2023,
-        3: "Mixed Methods",
-        4: 100,
-        5: "Hybrid approaches combining ML and expert review yield best results",
-      },
-      {
-        id: "4",
-        paperTitle: "Paper 4",
-        1: "Brown et al.",
-        2: 2022,
-        3: "Qualitative",
-        4: 75,
-        5: "Domain-specific training improves automated classification by 25%",
-      },
-      {
-        id: "5",
-        paperTitle: "Paper 5",
-        1: "Davis et al.",
-        2: 2020,
-        3: "Quantitative",
-        4: 300,
-        5: "Challenges remain in handling interdisciplinary research contexts",
-      },
-    ]
-  }
 
   // Generate sample fields if no extraction fields are available
   const getSampleFields = () => {
@@ -288,14 +310,14 @@ export default function ProjectPhase3Page() {
         <ProgressBar steps={steps} currentStep={currentStep} />
 
         <Tabs defaultValue="report" value={`step${currentStep}`}>
-          <TabsList className="grid grid-cols-3 mb-8">
+          <TabsList className="grid grid-cols-2 mb-8">
             <TabsTrigger value="step0" onClick={() => setCurrentStep(0)}>
               Report Generation
             </TabsTrigger>
-            <TabsTrigger value="step1" onClick={() => setCurrentStep(1)}>
+            {/* <TabsTrigger value="step1" onClick={() => setCurrentStep(1)}>
               Research Questions
-            </TabsTrigger>
-            <TabsTrigger value="step2" onClick={() => setCurrentStep(2)}>
+            </TabsTrigger> */}
+            <TabsTrigger value="step1" onClick={() => setCurrentStep(1)}>
               Interactive Query
             </TabsTrigger>
           </TabsList>
@@ -333,53 +355,44 @@ export default function ProjectPhase3Page() {
 
                         {reportGenerated ? (
                           <div className="mt-4 p-4 bg-white rounded-md border">
-                            <h4 className="font-medium mb-2">Report Sections</h4>
-                            <ul className="space-y-2">
-                              <li className="flex items-center gap-2">
-                                <Check className="h-4 w-4 text-green-600" />
-                                <span>Executive Summary</span>
-                              </li>
-                              <li className="flex items-center gap-2">
-                                <Check className="h-4 w-4 text-green-600" />
-                                <span>Introduction & Research Objectives</span>
-                              </li>
-                              <li className="flex items-center gap-2">
-                                <Check className="h-4 w-4 text-green-600" />
-                                <span>Methodology</span>
-                              </li>
-                              <li className="flex items-center gap-2">
-                                <Check className="h-4 w-4 text-green-600" />
-                                <span>Results & Analysis</span>
-                              </li>
-                              <li className="flex items-center gap-2">
-                                <Check className="h-4 w-4 text-green-600" />
-                                <span>Discussion</span>
-                              </li>
-                              <li className="flex items-center gap-2">
-                                <Check className="h-4 w-4 text-green-600" />
-                                <span>Conclusion & Future Work</span>
-                              </li>
-                              <li className="flex items-center gap-2">
-                                <Check className="h-4 w-4 text-green-600" />
-                                <span>References</span>
-                              </li>
-                            </ul>
-
-                            <div className="mt-4 flex justify-center">
-                              <ReportGenerator
-                                project={project}
-                                researchQuestions={researchQuestions}
-                                rqAnswers={rqAnswers}
-                                extractedData={getSampleData()}
-                              />
+                            <h4 className="text-lg font-semibold mb-2">Generated Report</h4>
+                            <div className="max-h-[400px] overflow-y-auto p-4 border rounded-md bg-gray-50">
+                              <div className="whitespace-pre-wrap text-sm text-gray-800">{renderFormattedReport(generatedReport)}</div>
                             </div>
                           </div>
                         ) : (
                           <div className="mt-4">
-                            <Button onClick={handleGenerateReport} className="gap-2">
-                              <Sparkles className="h-4 w-4" />
-                              Generate Report
+                            <Button onClick={handleGenerateReport} disabled={isGenerating} className="gap-2">
+                              {isGenerating && (
+                                <svg
+                                  className="animate-spin h-4 w-4 mr-2 text-white"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <circle
+                                    className="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                  />
+                                  <path
+                                    className="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8v8z"
+                                  />
+                                </svg>
+                              )}
+                              {isGenerating ? "Generating..." : (
+                                <>
+                                  <Sparkles className="h-4 w-4" />
+                                  Generate Report
+                                </>
+                              )}
                             </Button>
+
                           </div>
                         )}
                       </div>
@@ -390,7 +403,7 @@ export default function ProjectPhase3Page() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="step1">
+          {/* <TabsContent value="step1">
             <Card>
               <CardHeader>
                 <CardTitle>Research Question Analysis</CardTitle>
@@ -434,7 +447,7 @@ export default function ProjectPhase3Page() {
                                 </div>
                               </div>
 
-                              
+
                             </div>
                           ))}
 
@@ -464,9 +477,9 @@ export default function ProjectPhase3Page() {
                 </div>
               </CardContent>
             </Card>
-          </TabsContent>
+          </TabsContent> */}
 
-          <TabsContent value="step2">
+          <TabsContent value="step1">
             <Card>
               <CardHeader>
                 <CardTitle>Interactive Query System</CardTitle>
@@ -491,7 +504,11 @@ export default function ProjectPhase3Page() {
                     {chatHistory.map((message, index) => (
                       <div key={index} className={`mb-4 ${message.role === "user" ? "text-right" : ""}`}>
                         <div
-                          className={`inline-block p-3 rounded-lg ${message.role === "user" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-800"
+                          className={`inline-block p-3 rounded-lg ${message.role === "user"
+                            ? "bg-blue-600 text-white"
+                            : message.content === "Thinking..."
+                              ? "bg-yellow-100 text-yellow-800 italic animate-pulse"
+                              : "bg-gray-100 text-gray-800"
                             }`}
                         >
                           {message.content}
@@ -543,7 +560,7 @@ export default function ProjectPhase3Page() {
                       </Button>
                     </div>
                   </div>
-                  {chatHistory.length > 2 && <ChatVisualization chatHistory={chatHistory} />}
+                  {/* {chatHistory.length > 2 && <ChatVisualization chatHistory={chatHistory} />} */}
                 </div>
                 <div className="mt-8 p-4 bg-blue-50 rounded-md border border-blue-100">
                   <h3 className="font-medium mb-2">Next Steps</h3>
@@ -581,12 +598,10 @@ export default function ProjectPhase3Page() {
         </Tabs>
       </main>
 
-      <footer className="border-t py-6">
-        <div className="container px-4 sm:px-6">
-          <p className="text-center text-sm text-gray-600">
-            © {new Date().getFullYear()} SLR Automation. All rights reserved.
-          </p>
-        </div>
+      <footer className="border-t py-6 w-full flex justify-center">
+        <p className="text-center text-sm text-gray-600">
+          © {new Date().getFullYear()} SLR Automation. All rights reserved.
+        </p>
       </footer>
     </div>
   )

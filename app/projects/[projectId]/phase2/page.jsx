@@ -21,13 +21,12 @@ export default function ProjectPhase2Page() {
   const { projectId } = params
   const fileInputRef = useRef(null)
 
-
   const [project, setProject] = useState(null)
   const [currentStep, setCurrentStep] = useState(0)
   const [selectedPapers, setSelectedPapers] = useState([])
   const [uploadedPapers, setUploadedPapers] = useState([])
   const [processingComplete, setProcessingComplete] = useState(false)
-  const [extractionModel, setExtractionModel] = useState("gpt-4o")
+  const [extractionModel, setExtractionModel] = useState()
   const [extractionFields, setExtractionFields] = useState([
     { id: "1", name: "Title", type: "text", required: true },
     { id: "2", name: "Abstract", type: "text", required: true },
@@ -38,171 +37,95 @@ export default function ProjectPhase2Page() {
   ])
 
   const [papers, setPapers] = useState([]);
-
-  // const [pdfFiles, setPdfFiles] = useState([]);
-
-  const [pdfFiles, setPdfFiles] = useState([]); // array of File objects
-  const [uploadStatus, setUploadStatus] = useState({}); // object with filename keys and status values
-
-
+  const [pdfFiles, setPdfFiles] = useState([]);
+  const [uploadStatus, setUploadStatus] = useState({});
   const [extractedData, setExtractedData] = useState([])
 
   const steps = ["Paper Selection", "Paper Upload", "Data Extraction", "Data Processing"]
 
   useEffect(() => {
-    // Check if user is logged in
     const userData = localStorage.getItem("user")
     if (!userData) {
       router.push("/login")
       return
     }
 
-    // Load project data
     const savedProjects = localStorage.getItem("projects")
     if (savedProjects) {
       const projects = JSON.parse(savedProjects)
       const currentProject = projects.find((p) => p.id === projectId)
-      if (currentProject) {
-        setProject(currentProject)
-      } else {
-        console.warn("Project not found in savedProjects; skipping redirect")
-        setProject({ id: projectId }) // allow phase2 to work anyway
-      }
+      setProject(currentProject || { id: projectId })
     } else {
-      console.warn("No saved projects; assuming manual navigation")
-      setProject({ id: projectId }) // again fallback
+      setProject({ id: projectId })
     }
 
+    // 🛑 Immediately redirect if Phase 2 was completed
+    const phase2Data = localStorage.getItem(`project_${projectId}_phase2`)
+    if (phase2Data) {
+      const parsed = JSON.parse(phase2Data)
+      if (parsed.processingComplete) {
+        router.replace(`/projects/${projectId}/phase3`)
+        return  // ⛔ Ensure no further execution
+      }
+    }
+
+    // Load papers and step info only if not redirected
     const retrieved = localStorage.getItem(`project_${projectId}_retrievedPapers`);
+    let parsedPapers = [];
     if (retrieved) {
       try {
-        const parsed = JSON.parse(retrieved).map((paper, index) => ({
+        parsedPapers = JSON.parse(retrieved).map((paper, index) => ({
           ...paper,
-          id: paper.doi || paper.key || `paper-${index}`, // Ensure each paper has an ID
+          id: paper.doi || paper.key || `paper-${index}`,
         }));
-        setPapers(parsed);
+        setPapers(parsedPapers);
       } catch (err) {
         console.error("Failed to parse retrieved papers:", err);
       }
     }
 
-    const phaseData = localStorage.getItem(`project_${projectId}_phase2`);
-    if (phaseData) {
-      const data = JSON.parse(phaseData);
-      setCurrentStep(data.currentStep || 0);
-      setSelectedPapers(data.selectedPapers || []);
-      setUploadedPapers(data.uploadedPapers || []);
-      setProcessingComplete(data.processingComplete || false);
-      setExtractionModel(data.extractionModel || "gpt-4o");
-      if (data.extractionFields) setExtractionFields(data.extractionFields);
-      if (data.extractedData) setExtractedData(data.extractedData);
+    const storedSelected = localStorage.getItem(`project_${projectId}_selectedPapers`)
+    if (storedSelected) {
+      const parsedSelected = JSON.parse(storedSelected)
+      setSelectedPapers(parsedSelected)
+      const hydratedUploads = parsedSelected.map(id => parsedPapers.find(p => p.id === id)).filter(Boolean)
+      setUploadedPapers(hydratedUploads)
     }
 
     const fetchUploadedPdfs = async () => {
       try {
         const res = await fetch(`http://127.0.0.1:5000/api/list_uploaded_pdfs/${projectId}`);
         const files = await res.json();
-
-        const fileObjs = files.map((name) => new File([], name)); // empty `File` objects for UI
+        const fileObjs = files.map((name) => new File([], name));
         setPdfFiles(fileObjs);
 
         const statusObj = {};
-        files.forEach((name) => {
-          statusObj[name] = "uploaded";
-        });
+        files.forEach((name) => { statusObj[name] = "uploaded"; });
         setUploadStatus(statusObj);
+
+        if (files.length > 0) setCurrentStep(1);
       } catch (err) {
         console.error("Failed to load uploaded PDFs:", err);
       }
     };
 
     fetchUploadedPdfs();
-
-  }, [projectId, router]);
-
-  // Save phase data when it changes
-  useEffect(() => {
-    if (projectId) {
-      const phaseData = {
-        currentStep,
-        selectedPapers,
-        uploadedPapers,
-        processingComplete,
-        extractionModel,
-        extractionFields,
-        extractedData,
-      }
-      localStorage.setItem(`project_${projectId}_phase2`, JSON.stringify(phaseData))
-    }
-  }, [
-    projectId,
-    currentStep,
-    selectedPapers,
-    uploadedPapers,
-    processingComplete,
-    extractionModel,
-    extractionFields,
-    extractedData,
-  ])
+  }, [projectId, router])
 
 
   const togglePaperSelection = (id) => {
-    if (selectedPapers.includes(id)) {
-      setSelectedPapers(selectedPapers.filter((paperId) => paperId !== id))
-    } else {
-      setSelectedPapers([...selectedPapers, id])
-    }
+    setSelectedPapers((prev) => {
+      const updated = prev.includes(id) ? prev.filter((paperId) => paperId !== id) : [...prev, id]
+      localStorage.setItem(`project_${projectId}_selectedPapers`, JSON.stringify(updated))
+      return updated
+    })
   }
 
   const handleUploadPaper = () => {
-    // Simulate paper upload
-    const newUploadedPapers = selectedPapers
-      .map((id) => {
-        const paper = papers.find((p) => p.id === id)
-        return paper ? paper.title : ""
-      })
-      .filter((title) => title)
-
+    const newUploadedPapers = selectedPapers.map((id) => papers.find((p) => p.id === id)).filter(Boolean)
     setUploadedPapers(newUploadedPapers)
     setCurrentStep(1)
   }
-
-  // const handleUploadToServer = async () => {
-  //   if (!pdfFiles.length) return;
-
-  //   for (const file of pdfFiles) {
-  //     const formData = new FormData();
-  //     formData.append("pdf", file);
-
-  //     formData.append("title", file.name);
-  //     formData.append("creator", "Unknown Author"); // optionally replace
-  //     formData.append("year", new Date().getFullYear());
-  //     formData.append("doi", "N/A");
-  //     formData.append("link", "Unknown");
-  //     formData.append("project_id", projectId);
-
-  //     try {
-  //       const res = await fetch("http://127.0.0.1:5000/api/upload_pdf", {
-  //         method: "POST",
-  //         body: formData,
-  //       });
-
-  //       const result = await res.json();
-
-  //       if (!res.ok) {
-  //         alert("Upload failed: " + result.error);
-  //       } else {
-  //         alert("Uploaded: " + file.name);
-  //         console.log("Server response:", result);
-  //       }
-  //     } catch (err) {
-  //       console.error("Upload error:", err);
-  //       alert("Upload failed unexpectedly.");
-  //     }
-  //   }
-
-  //   setPdfFiles([]); // Clear after upload
-  // };
 
   const handleUploadToServer = async () => {
     if (!projectId || !pdfFiles.length) return;
@@ -262,78 +185,9 @@ export default function ProjectPhase2Page() {
     }
   };
 
-
-
   const handleConfigureExtraction = () => {
     setCurrentStep(2)
   }
-
-  // const handleExtractData = () => {
-  //   // Simulate data extraction
-  //   setTimeout(() => {
-  //     // Generate mock extracted data based on the fields
-  //     const mockData = uploadedPapers.map((title, index) => {
-  //       const paper = papers.find((p) => p.title === title) || papers[index % papers.length]
-
-  //       const extractedItem = {
-  //         id: `extract-${Date.now()}-${index}`,
-  //         paperTitle: title,
-  //       }
-
-  //       // Add values for each extraction field
-  //       extractionFields.forEach((field) => {
-  //         switch (field.name) {
-  //           case "Title":
-  //             extractedItem[field.id] = title
-  //             break
-  //           case "Authors":
-  //             extractedItem[field.id] = paper.authors
-  //             break
-  //           case "Year":
-  //             extractedItem[field.id] = paper.year
-  //             break
-  //           case "Methodology":
-  //             extractedItem[field.id] = ["Qualitative", "Quantitative", "Mixed Methods", "Case Study"][
-  //               Math.floor(Math.random() * 4)
-  //             ]
-  //             break
-  //           case "Sample Size":
-  //             extractedItem[field.id] = Math.floor(Math.random() * 500) + 50
-  //             break
-  //           case "Key Findings":
-  //             extractedItem[field.id] = [
-  //               "AI techniques significantly reduce SLR time by 40-60%",
-  //               "NLP methods show 85% accuracy in initial paper screening",
-  //               "Hybrid approaches combining ML and expert review yield best results",
-  //               "Domain-specific training improves automated classification by 25%",
-  //               "Challenges remain in handling interdisciplinary research contexts",
-  //             ][Math.floor(Math.random() * 5)]
-  //             break
-  //           default:
-  //             if (field.type === "text") {
-  //               extractedItem[field.id] = `Sample ${field.name} data`
-  //             } else if (field.type === "number") {
-  //               extractedItem[field.id] = Math.floor(Math.random() * 100)
-  //             } else if (field.type === "date") {
-  //               extractedItem[field.id] =
-  //                 `2022-${Math.floor(Math.random() * 12) + 1}-${Math.floor(Math.random() * 28) + 1}`
-  //             } else if (field.type === "boolean") {
-  //               extractedItem[field.id] = Math.random() > 0.5
-  //             } else if (field.type === "list") {
-  //               extractedItem[field.id] = ["Item 1", "Item 2", "Item 3"]
-  //                 .slice(0, Math.floor(Math.random() * 3) + 1)
-  //                 .join(", ")
-  //             }
-  //         }
-  //       })
-
-  //       return extractedItem
-  //     })
-
-  //     setExtractedData(mockData)
-  //     setCurrentStep(3)
-  //   }, 2000)
-  // }
 
   const handleExtractData = async () => {
     console.log("Extracting data for project ID:", projectId);
@@ -388,7 +242,7 @@ export default function ProjectPhase2Page() {
       currentStep,
       selectedPapers,
       uploadedPapers,
-      processingComplete,
+      processingComplete: true,
       extractionModel,
       extractionFields,
       extractedData,
@@ -457,8 +311,8 @@ export default function ProjectPhase2Page() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {papers.map((paper) => (
-                        <TableRow key={paper.id}>
+                      {papers.map((paper, index) => (
+                        <TableRow key={`${paper.doi || 'unknown'}-${index}`}>
                           <TableCell>
                             <Button
                               variant={selectedPapers.includes(paper.id) ? "default" : "outline"}
@@ -512,9 +366,9 @@ export default function ProjectPhase2Page() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {uploadedPapers.map((title, index) => (
+                        {uploadedPapers.map((paper, index) => (
                           <TableRow key={index}>
-                            <TableCell className="font-medium">{toTitleCase(title)}</TableCell>
+                            <TableCell className="font-medium">{toTitleCase(paper.title)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -735,12 +589,10 @@ export default function ProjectPhase2Page() {
         </Tabs>
       </main>
 
-      <footer className="border-t py-6">
-        <div className="container px-4 sm:px-6">
-          <p className="text-center text-sm text-gray-600">
-            © {new Date().getFullYear()} SLR Automation. All rights reserved.
-          </p>
-        </div>
+      <footer className="border-t py-6 w-full flex justify-center">
+        <p className="text-center text-sm text-gray-600">
+          © {new Date().getFullYear()} SLR Automation. All rights reserved.
+        </p>
       </footer>
     </div>
   )

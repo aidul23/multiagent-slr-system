@@ -108,7 +108,6 @@ def encode_search_string(search_string):
     encoded_string = urllib.parse.quote(search_string, safe='')
     return encoded_string
 
-
 def search_elsevier(search_string, start_year, end_year, limit, is_english, is_peer_reviewed, keywords, is_cited):
     url = "https://api.elsevier.com/content/search/scopus"
     headers = {
@@ -123,10 +122,23 @@ def search_elsevier(search_string, start_year, end_year, limit, is_english, is_p
     print(f"Searching Elsevier with: English={is_english}, Peer-reviewed={is_peer_reviewed}, Keywords={keywords}, Cited={is_cited}")
 
     # Construct query with proper Boolean syntax
-    print(f'{start_year} | {end_year}')
-    query = f'TITLE-ABS-KEY({search_string})'
-    if end_year:
-        query = f'TITLE-ABS-KEY({search_string})'
+    
+    # if end_year and start_year != end_year:
+    #     query = f'TITLE-ABS-KEY({search_string}) AND PUBYEAR >= {start_year} AND PUBYEAR <= {end_year}'
+    # else:
+    #     query = f'TITLE-ABS-KEY({search_string}) AND PUBYEAR = {start_year}'
+        
+    if end_year and start_year != end_year:
+        query_parts = [f'TITLE-ABS-KEY({search_string})', f'PUBYEAR > {start_year}', f'PUBYEAR < {end_year}']
+    else:
+        query_parts = [f'TITLE-ABS-KEY({search_string})', f'PUBYEAR = {start_year}']
+
+    # Add English language filter if needed
+    if is_english:
+        query_parts.append('LANGUAGE(english)')
+
+    # Join all parts with AND
+    query = ' AND '.join(f'({part})' for part in query_parts)
 
 
     total_fetched = 0
@@ -134,13 +146,11 @@ def search_elsevier(search_string, start_year, end_year, limit, is_english, is_p
     max_per_request = 25  # Elsevier allows max 25 per request
     all_papers = []
     
-    print(f"{limit}")
 
     while total_fetched < limit:
         remaining = limit - total_fetched
         count = min(max_per_request, remaining)  # Request only what's allowed
         
-        print(f"{is_cited}")
 
         # Dynamically add sorting parameter based on is_cited
         if is_cited:
@@ -156,8 +166,6 @@ def search_elsevier(search_string, start_year, end_year, limit, is_english, is_p
                 "count": count,
                 "start": start_index
             }
-
-        print(f"Fetching {count} papers starting at index {start_index}...")
 
         try:
             response = requests.get(url, headers=headers, params=params)
@@ -212,8 +220,6 @@ def search_elsevier(search_string, start_year, end_year, limit, is_english, is_p
             total_fetched += fetched_this_round
             start_index += 1
 
-            print(f"Fetched {fetched_this_round} papers, total: {total_fetched}/{limit}")
-
             # Stop if we reach the total available papers
             total_results = int(response_data.get("search-results", {}).get("opensearch:totalResults", 0))
             if total_fetched >= total_results:
@@ -224,12 +230,6 @@ def search_elsevier(search_string, start_year, end_year, limit, is_english, is_p
             print(f"Error fetching papers: {e}")
             break
         
-    # After Sorting - Print out paper info to check sorting
-    print("\nAfter Sorting (Cited Counts):")
-    for paper in all_papers:
-        print(f"Title: {paper['title']} | Cited by: {paper['citedby_count']}")
-    
-    print(f"Total papers retrieved: {len(all_papers)}")
     return all_papers
 
 def search_arxiv(search_string, start_year, end_year, limit):

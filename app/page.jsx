@@ -1,8 +1,32 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { ArrowRight } from "lucide-react"
 import Link from "next/link"
+import { supabase } from "@/lib/supabaseClient"
 
 export default function Home() {
+  const router = useRouter()
+  const [redirectPath, setRedirectPath] = useState("/register")
+
+  useEffect(() => {
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (session || localStorage.getItem("user")) {
+        setRedirectPath("/dashboard")
+      }
+    }
+
+    checkUser()
+  }, [])
+
+  const handleGetStarted = () => {
+    router.push(redirectPath)
+  }
+
   return (
     <div className="flex flex-col min-h-screen">
       <header className="border-b">
@@ -18,20 +42,21 @@ export default function Home() {
           </div>
         </div>
       </header>
+
       <main className="flex flex-1 flex-col items-center justify-center w-full">
         <section className="container px-4 py-12 sm:px-6 lg:py-24">
           <div className="max-w-3xl mx-auto text-center">
-            <h2 className="text-4xl font-bold tracking-tight sm:text-5xl">Systematic Literature Review Automation</h2>
+            <h2 className="text-4xl font-bold tracking-tight sm:text-5xl">
+              Systematic Literature Review Automation
+            </h2>
             <p className="mt-6 text-lg text-gray-600">
-              Streamline your research process with AI-powered SLR automation. Generate research objectives, questions,
-              and search strings, manage papers, and create comprehensive reports.
+              Streamline your research process with AI-powered SLR automation. Generate research objectives,
+              questions, and search strings, manage papers, and create comprehensive reports.
             </p>
             <div className="mt-10">
-              <Link href="/register">
-                <Button size="lg" className="px-8">
-                  Get Started <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </Link>
+              <Button size="lg" className="px-8" onClick={handleGetStarted}>
+                Get Started <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
             </div>
           </div>
 
@@ -69,6 +94,7 @@ export default function Home() {
           </div>
         </section>
       </main>
+
       <footer className="border-t py-6 w-full flex justify-center">
         <p className="text-center text-sm text-gray-600">
           © {new Date().getFullYear()} SLR Automation. All rights reserved.
@@ -77,3 +103,4 @@ export default function Home() {
     </div>
   )
 }
+

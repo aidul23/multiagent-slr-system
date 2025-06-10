@@ -19,26 +19,38 @@ export default function RegisterPage() {
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
 
-  const handleRegister = (e) => {
-    e.preventDefault()
-    setError("")
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setError("");
 
-    // Basic validation
     if (password !== confirmPassword) {
-      setError("Passwords do not match")
-      return
+      setError("Passwords do not match");
+      return;
     }
 
-    setIsLoading(true)
+    setIsLoading(true);
 
-    // Simulate registration process
-    setTimeout(() => {
-      // In a real app, you would send this data to your backend
-      localStorage.setItem("user", JSON.stringify({ email, name }))
-      router.push("/dashboard")
-      setIsLoading(false)
-    }, 1000)
-  }
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Registration failed");
+      } else {
+        localStorage.setItem("user", JSON.stringify(data.user));
+        router.push("/dashboard");
+      }
+    } catch (err) {
+      setError("Something went wrong");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">

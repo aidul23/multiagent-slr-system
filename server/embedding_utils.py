@@ -55,10 +55,5 @@ def generate_embeddings_from_text(text, prefix="doc"):
             chunk_names.append(f"{prefix}_chunk_{i+1}")
             chunk_texts.append(chunk)
 
-    print(all_embeddings)
-    print("-----------------------")
-    print(chunk_names)
-    print("-----------------------")
-    print(chunk_texts)
     return all_embeddings, chunk_names, chunk_texts
 

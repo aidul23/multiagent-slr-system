@@ -11,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { supabase } from "../lib/supabaseClient"
 import { LogOut, Settings, User } from "lucide-react"
 
 /**
@@ -20,10 +21,20 @@ import { LogOut, Settings, User } from "lucide-react"
 export function UserNav({ user }) {
   const router = useRouter()
 
-  const handleLogout = () => {
-    localStorage.removeItem("user")
-    router.push("/login")
-  }
+  const handleLogout = async () => {
+    try {
+      // Sign out the user using Supabase
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error("Logout error:", error);
+      } else {
+        localStorage.removeItem("user")
+        router.push("/login")
+      }
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
+  };
 
   if (!user) return null
 
@@ -32,15 +43,18 @@ export function UserNav({ user }) {
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="relative h-10 w-10 rounded-full">
           <Avatar className="h-10 w-10">
-            <AvatarImage src="/placeholder.svg?height=40&width=40" alt={user.name} />
-            <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
+            <AvatarImage
+              src={user.user_metadata?.avatar_url}
+              alt={user.name}
+            />
+            <AvatarFallback>{user.user_metadata?.name.charAt(0) || user.name.charAt(0)}</AvatarFallback>
           </Avatar>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuLabel>
           <div className="flex flex-col space-y-1">
-            <p className="text-sm font-medium">{user.name}</p>
+            <p className="text-sm font-medium">{user.user_metadata?.name || user.name}</p>
             <p className="text-xs text-gray-500">{user.email}</p>
           </div>
         </DropdownMenuLabel>

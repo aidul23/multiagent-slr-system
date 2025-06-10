@@ -9,6 +9,7 @@ from agents2 import generate_search_string_with_gpt, refine_search_string_with_g
 from agents3 import fetch_papers, save_papers_to_csv, search_elsevier, search_arxiv, search_ieee_xplore, search_semantic_scholar
 from agents4 import filter_papers_with_gpt_turbo, generate_response_gpt4_turbo, extract_structured_data_from_ai
 from flask_cors import CORS, cross_origin # type: ignore
+from rag_engine import query_rag_system
 import requests
 from datetime import datetime
 from flask_socketio import SocketIO, emit # type: ignore
@@ -24,7 +25,9 @@ from embedding_utils import generate_embeddings_from_text
 import numpy as np
 import faiss
 from openai import OpenAI
-
+import shutil
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 
 load_dotenv()
 
@@ -39,6 +42,58 @@ client = OpenAI(api_key = api_key)
 app = Flask(__name__, static_folder='dist')
 CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}})
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# SQLite database
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+db = SQLAlchemy(app)
+
+# User model
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
+
+# Initialize the database
+with app.app_context():
+    db.create_all()
+
+@app.route('/api/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    name = data.get('name')
+    email = data.get('email')
+    password = data.get('password')
+
+    if User.query.filter_by(email=email).first():
+        return jsonify({'error': 'User already exists'}), 400
+
+    hashed_pw = generate_password_hash(password)
+    new_user = User(name=name, email=email, password=hashed_pw)
+    db.session.add(new_user)
+    db.session.commit()
+
+    return jsonify({'message': 'User registered successfully', 'user': {'name': name, 'email': email}})
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+
+    user = User.query.filter_by(email=email).first()
+    if not user or not check_password_hash(user.password, password):
+        return jsonify({'error': 'Invalid credentials'}), 401
+
+    return jsonify({
+        'message': 'Login successful',
+        'user': {
+            'id': user.id,  # 👈 Add this
+            'name': user.name,
+            'email': user.email
+        }
+    })
+
 
 
 UPLOAD_FOLDER = "uploads"
@@ -104,6 +159,26 @@ def create_project():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/delete_project/<project_id>", methods=["DELETE"])
+def delete_project(project_id):
+    try:
+        # Delete from MongoDB
+        result = projects_collection.delete_one({"_id": ObjectId(project_id)})
+
+        if result.deleted_count == 0:
+            return jsonify({"error": "Project not found"}), 404
+
+        # Optionally remove local folders related to the project
+        local_folders = ["uploads", "data", "dataembedding"]
+        for folder in local_folders:
+            project_path = os.path.join(folder, project_id)
+            if os.path.exists(project_path):
+                shutil.rmtree(project_path)
+
+        return jsonify({"message": "Project deleted successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
 @app.route("/api/confirm_questions", methods=["POST"])
 def confirm_questions():
     try:
@@ -193,25 +268,43 @@ def load_data_from_json():
     else:
         extracted_data_store = {}
 
-# Load data on application start
-# load_data_from_json()
-
 def save_to_csv(data, project_id):
-    """Saves extracted data to a CSV file inside data/{project_id}/ directory."""
-
-    folder_path = os.path.join("data", project_id)  # 🔹 Store per project
-    os.makedirs(folder_path, exist_ok=True)  # Create if not exists
-
+    folder_path = os.path.join("data", project_id)
+    os.makedirs(folder_path, exist_ok=True)
     csv_file = os.path.join(folder_path, "extracted_data.csv")
 
+    new_row = {
+        "Title": data[0],
+        "Abstract": data[1],
+        "Year": data[2],
+        "Publisher": data[3],
+        "Authors": data[4],
+        "DOI": data[5]
+    }
+
+    # Check for duplication
+    if os.path.isfile(csv_file):
+        try:
+            existing_df = pd.read_csv(csv_file, dtype=str, on_bad_lines='skip')
+            if not existing_df[existing_df["DOI"] == new_row["DOI"]].empty:
+                print(f"Duplicate found for DOI: {new_row['DOI']}")
+                return  # Skip duplicate
+        except Exception as e:
+            print("❌ Error reading CSV for deduplication check:", e)
+            return
+
+    # Write using csv.DictWriter to ensure quoting
     file_exists = os.path.isfile(csv_file)
-    with open(csv_file, mode="a", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-
+    with open(csv_file, mode="a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["Title", "Abstract", "Year", "Publisher", "Authors", "DOI"],
+            quoting=csv.QUOTE_ALL
+        )
         if not file_exists:
-            writer.writerow(["Title", "Abstract", "Year", "Publisher", "Authors", "DOI"])  
+            writer.writeheader()
+        writer.writerow(new_row)
 
-        writer.writerow(data)
 
 @app.route("/api/get_csv", methods=["GET"])
 def get_csv():
@@ -245,85 +338,13 @@ def download_csv():
 
     return send_from_directory(project_path, file_name, as_attachment=True)
 
-# def extract_text_from_pdf(file_path):
-#     doc = fitz.open(file_path)
-#     full_text = ""
-#     for page in doc:
-#         full_text += page.get_text()
-#     return full_text.strip()
 
 def generate_embedding(text, model="text-embedding-ada-002"):
     response = client.embeddings.create(input=text,
     model=model)
     return response.data[0].embedding
 
-# previous one
-# @app.route("/api/upload_pdf", methods=["POST"])
-# def upload_pdf():
-#     if "pdf" not in request.files:
-#         return jsonify({"error": "No file part"}), 400
 
-#     file = request.files["pdf"]
-#     if file.filename == "":
-#         return jsonify({"error": "No selected file"}), 400
-
-#     # Get additional metadata
-#     title = request.form.get("title", "Unknown Title")
-#     creator = request.form.get("creator", "Unknown Author")
-#     year = request.form.get("year", "Unknown Year")
-#     doi = request.form.get("doi", "N/A")
-#     link = request.form.get("link", "Unknown Publisher")
-#     project_id = request.form.get("project_id", "default_project")
-
-#     # Save the file in uploads directory
-#     project_folder = os.path.join(UPLOAD_FOLDER, project_id)
-#     os.makedirs(project_folder, exist_ok=True)
-#     file_path = os.path.join(project_folder, file.filename)
-#     file.save(file_path)
-
-#     #  Extract structured data using AI
-#     structured_data = extract_structured_data_from_ai(file_path)
-
-#     # Append extracted data
-#     if project_id not in extracted_data_store:
-#         extracted_data_store[project_id] = []
-
-#     extracted_data_store[project_id].append(structured_data)
-
-#     # Save to JSON for persistence
-#     save_data_to_json()
-
-#     #text = extract_text_from_pdf(file_path)
-#     #embedding = generate_embedding(text)
-
-#     # Update MongoDB project document
-#     # doc = {
-#     #     "file_name": file.filename,
-#     #     "title": title,
-#     #     "text": text,
-#     #     "embedding": embedding,
-#     #     "metadata": {
-#     #         "creator": creator,
-#     #         "year": year,
-#     #         "doi": doi,
-#     #         "link": link
-#     #     }
-#     # }
-
-#     # result = projects_collection.update_one(
-#     #     {"_id": ObjectId(project_id)},
-#     #     {"$push": {"documents": doc}}
-#     # )
-
-#     # if result.matched_count == 0:
-#     #     return jsonify({"error": "Project not found"}), 404
-
-#     return jsonify({
-#         "message": "File uploaded and processed successfully! and PDF uploaded, embedded, and saved to project successfully!",
-#         "data": structured_data,
-#         "filename": file.filename,
-#         "project_id": project_id
-#     })
 
 @app.route("/api/upload_pdf", methods=["POST"])
 def upload_pdf():
@@ -952,7 +973,7 @@ def search_papers():
     # arxiv_results = search_arxiv(search_string, start_year, end_year, limit)
     # ieee_xplore_results = search_ieee_xplore(search_string, start_year, end_year, limit)
 
-    combined_results = [elsevier_results, semantic_results]
+    combined_results = [elsevier_results]
     
     print(F"ID: {project_id} - search_string {search_string}")
     
@@ -969,6 +990,19 @@ def search_papers():
 
 
     return jsonify(combined_results)
+
+@app.route("/api/rag_chat", methods=["POST"])
+def rag_chat():
+    data = request.json
+    project_id = data.get("project_id")
+    query = data.get("query")
+
+    if not project_id or not query:
+        return jsonify({"error": "project_id and query are required"}), 400
+
+    result = query_rag_system(project_id, query)
+    return jsonify(result)
+
 
 # Running app
 if __name__ == '__main__':

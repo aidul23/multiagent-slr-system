@@ -139,8 +139,8 @@ export default function Phase2Page() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {papers.map((paper) => (
-                      <TableRow key={paper.id}>
+                    {papers.map((paper, index) => (
+                      <TableRow key={`${paper.doi || 'unknown'}-${index}`}>
                         <TableCell>
                           <Button
                             variant={selectedPapers.includes(paper.id) ? "default" : "outline"}
