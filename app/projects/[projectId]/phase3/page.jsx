@@ -14,6 +14,13 @@ import { ChartContainer } from "@/components/chart-container"
 import { ReportGenerator } from "@/components/report-generator"
 import { FileText, Send, Sparkles, Check, ArrowRight, BarChart } from "lucide-react"
 import { ChatVisualization } from "@/components/chat-visualization"
+import { BASE_URL } from "../../../../lib/url";
+import { Document, Packer, Paragraph, TextRun } from "docx";
+import { saveAs } from "file-saver";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeSlug from "rehype-slug";
+import rehypeAutolinkHeadings from "rehype-autolink-headings";
 
 export default function ProjectPhase3Page() {
   const router = useRouter()
@@ -34,26 +41,48 @@ export default function ProjectPhase3Page() {
   const [rqAnswers, setRqAnswers] = useState([])
   const [isGenerating, setIsGenerating] = useState(false)
   const [isThinking, setIsThinking] = useState(false)
+  const [refinementPrompt, setRefinementPrompt] = useState("")
+  const [isRefining, setIsRefining] = useState(false)
+  const [reportSources, setReportSources] = useState([])
+  const [objective, setObjective] = useState("")
 
 
   const steps = ["Report Generation", "Interactive Query"]
 
   const renderFormattedReport = (text) => {
-    const sections = text.split(/\*\*(.*?)\*\*/).filter(Boolean); // Split on **...**
+    // Try Markdown headings (##)
+    let sections = text.split(/^##\s+/gm).filter(Boolean);
 
-    const output = [];
-    for (let i = 0; i < sections.length; i += 2) {
-      const title = sections[i].trim();       // e.g. 1. Introduction
-      const body = (sections[i + 1] || "").trim();  // next content block
+    // If no headings found, try old style (**...**)
+    if (sections.length === 1) {
+      sections = text.split(/\*\*(.*?)\*\*/).filter(Boolean);
+      return sections.reduce((acc, curr, idx) => {
+        if (idx % 2 === 0) return acc; // skip heading titles
+        const title = sections[idx - 1]?.trim() || `Section ${idx / 2}`;
+        const body = curr.trim();
+        acc.push(
+          <div key={idx} className="mb-6">
+            <h2 className="text-xl font-bold mb-2">{title}</h2>
+            <p className="text-gray-800 whitespace-pre-line">{body}</p>
+          </div>
+        );
+        return acc;
+      }, []);
+    }
 
-      output.push(
-        <div key={i} className="mb-6">
+    // Standard rendering with Markdown headings
+    return sections.map((section, index) => {
+      const lines = section.trim().split("\n");
+      const title = lines[0].trim();
+      const body = lines.slice(1).join("\n").trim();
+
+      return (
+        <div key={index} className="mb-6">
           <h2 className="text-xl font-bold mb-2">{title}</h2>
           <p className="text-gray-800 whitespace-pre-line">{body}</p>
         </div>
       );
-    }
-    return output;
+    });
   };
 
   useEffect(() => {
@@ -84,6 +113,11 @@ export default function ProjectPhase3Page() {
     const phase1Data = localStorage.getItem(`project_${projectId}_phase1`)
     if (phase1Data) {
       const data = JSON.parse(phase1Data)
+      if (data.objective) {
+        // Strip the "Research Objective:\n" prefix if needed
+        const clean = data.objective.replace(/^Research Objective:\s*/i, "").trim()
+        setObjective(clean)
+      }
       if (data.confirmedQuestions) {
         setResearchQuestions(data.confirmedQuestions.map(q => q.question))
       }
@@ -140,6 +174,70 @@ export default function ProjectPhase3Page() {
 
   }, [projectId, router])
 
+  useEffect(() => {
+    const saved = localStorage.getItem(`project_${projectId}_report_sources`);
+    if (saved) setReportSources(JSON.parse(saved));
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+
+    // 1) Load report (string)
+    const savedReportRaw = localStorage.getItem(`project_${projectId}_report`);
+    if (savedReportRaw) {
+      try {
+        const savedReport = JSON.parse(savedReportRaw);
+        if (typeof savedReport === "string" && savedReport.trim()) {
+          setGeneratedReport(savedReport);
+          setReportGenerated(true);
+        }
+      } catch { }
+    }
+
+    // 2) Load sources from either key & normalize to the canonical key
+    const rawCanon = localStorage.getItem(sourcesKey(projectId));
+    const rawDeep = localStorage.getItem(deepSourcesKey(projectId)); // Phase 1 wrote this key
+
+    let src = [];
+    try { if (rawCanon) src = JSON.parse(rawCanon) } catch { }
+    if (!src?.length) {
+      try { if (rawDeep) src = JSON.parse(rawDeep) } catch { }
+      if (src?.length) {
+        // re-save under canonical key so future loads are consistent
+        localStorage.setItem(sourcesKey(projectId), JSON.stringify(src));
+      }
+    }
+    if (src?.length) {
+      setReportSources(src);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    if (!generatedReport) return;
+    if (!reportSources?.length) return;
+
+    const hasSourcesSection = /^\s*##\s*Sources\b/im.test(generatedReport);
+    if (!hasSourcesSection) {
+      const merged = `${generatedReport.trim()}\n\n${sourcesToMarkdown(reportSources)}`.trim();
+      setGeneratedReport(merged);
+      localStorage.setItem(`project_${projectId}_report`, JSON.stringify(merged));
+    }
+    // run when sources arrive or when report loads
+  }, [projectId, reportSources, generatedReport]);
+
+
+
+  useEffect(() => {
+    if (!generatedReport) return;
+    if (reportSources?.length && !/^\s*##\s*Sources\b/im.test(generatedReport)) {
+      const merged = `${generatedReport.trim()}\n\n${sourcesToMarkdown(reportSources)}`.trim();
+      setGeneratedReport(merged);
+      localStorage.setItem(`project_${projectId}_report`, JSON.stringify(merged));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportSources]); // run when sources arrive
+
   // Save phase data when it changes
   useEffect(() => {
     if (projectId) {
@@ -150,13 +248,14 @@ export default function ProjectPhase3Page() {
         reportModel,
         queryModel,
         rqAnswers,
-        generatedReport
+        generatedReport,
+        reportSources,
       }
       localStorage.setItem(`project_${projectId}_phase3`, JSON.stringify(phaseData))
 
       const fetchProject = async () => {
         try {
-          const response = await fetch(`http://127.0.0.1:5000/api/get_project/${projectId}`);
+          const response = await fetch(`${BASE_URL}/get_project/${projectId}`);
           const data = await response.json();
 
           if (response.ok && data.project) {
@@ -181,40 +280,157 @@ export default function ProjectPhase3Page() {
 
       fetchProject();
     }
-  }, [projectId, currentStep, reportGenerated, chatHistory, reportModel, queryModel, rqAnswers, generatedReport])
+  }, [projectId, currentStep, reportGenerated, chatHistory, reportModel, queryModel, rqAnswers, generatedReport, reportSources])
+
+  const sourcesKey = (projectId) => `project_${projectId}_report_sources`;
+  const deepSourcesKey = (projectId) => `project_${projectId}_deep_sources`;
+
+  function sourcesToMarkdown(sources = []) {
+    if (!Array.isArray(sources) || sources.length === 0) return "";
+    const lines = sources.map((s, i) => {
+      const title = s.title || `Source ${i + 1}`;
+      const meta = [s.venue, s.year].filter(Boolean).join(", ");
+      const url = s.url ? `\n${s.url}` : "";
+      return `${i + 1}. **${title}**${meta ? ` — _${meta}_` : ""}${url}`;
+    });
+    return `## Sources\n\n${lines.join("\n")}\n`;
+  }
+
+  function wireCitationsToSources(md, sources = []) {
+    if (!md) return md;
+
+    // Link [#13] → [13](#source-13)
+    let out = md.replace(/\[#(\d+)\]/g, (_m, n) => `[${n}](#source-${n})`);
+
+    // Add anchors to each numbered source line "1. **Title** ..."
+    // so the links can target them.
+    out = out.replace(
+      /^(\d+)\.\s+\*\*(.+?)\*\*/gm,
+      (_m, n, title) => `<a id="source-${n}"></a>${n}. **${title}**`
+    );
+
+    return out;
+  }
 
 
   const handleGenerateReport = async () => {
-
-    setIsGenerating(true)
+    setIsGenerating(true);
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/generate_report", {
+      const res = await fetch(`${BASE_URL}/generate_report`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           project_id: projectId,
           research_questions: researchQuestions,
+          objective: objective,
+        }),
+      });
+
+      if (!res.ok) {
+        console.error("Backend error:", await res.text());
+        return;
+      }
+
+      const data = await res.json();
+
+      // 1) Get fresh data from backend
+      const rawReport = (data.report || "").trim();
+      const src = Array.isArray(data.sources) ? data.sources : [];
+
+      // 2) Build the final Markdown we want to show/save
+      const merged = `${rawReport}\n\n${sourcesToMarkdown(src)}`.trim();
+
+      // 3) Wire [1] / [#1] to anchors using the NEW report + sources
+      const display = wireCitationsToSources(merged, src);
+
+      // 4) Update state first with the new values
+      setReportSources(src);
+      setGeneratedReport(display);
+      setReportGenerated(true);
+
+      // 5) Persist canonically
+      localStorage.setItem(sourcesKey(projectId), JSON.stringify(src));
+      localStorage.setItem(`project_${projectId}_report`, JSON.stringify(display));
+    } catch (err) {
+      console.error("Report generation failed:", err);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+
+
+
+  const handleRefineReport = async () => {
+    setIsRefining(true)
+    try {
+      const res = await fetch(`${BASE_URL}/refine_report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          existing_report: generatedReport,
+          refinement_prompt: refinementPrompt,
         }),
       });
 
       if (!res.ok) {
         const err = await res.json();
-        alert(err.error || "Failed to generate report");
+        alert(err.error || "Failed to refine report");
         return;
       }
 
       const data = await res.json();
-      // Save the report in state or localStorage if needed
-      setGeneratedReport(data.report)
-      localStorage.setItem(`project_${projectId}_report`, JSON.stringify(data.report));
-      setReportGenerated(true);
-    } catch (err) {
-      console.error("Report generation failed:", err)
-    } finally {
-      setIsGenerating(false)
-    }
-  };
 
+      // ✅ Correctly extract the string content
+      const refined = data.report?.refined_report;
+      if (!refined) {
+        alert("Refined report not found in response.");
+        return;
+      }
+
+      setGeneratedReport(refined); // ✅ string only
+      localStorage.setItem(`project_${projectId}_report`, JSON.stringify(refined));
+      setRefinementPrompt(""); // clear prompt box
+    } catch (err) {
+      console.error("Refinement failed:", err);
+    } finally {
+      setIsRefining(false);
+    }
+  }
+
+  const handleDownloadDocx = async () => {
+    if (!generatedReport) return;
+
+    const sections = generatedReport.split(/^##\s+/gm).filter(Boolean);
+
+    const doc = new Document({
+      sections: [
+        {
+          properties: {},
+          children: sections.map((section) => {
+            const lines = section.trim().split("\n");
+            const heading = lines[0].trim();
+            const body = lines.slice(1).join("\n").trim();
+
+            return [
+              new Paragraph({
+                children: [new TextRun({ text: heading, bold: true, size: 28 })],
+                spacing: { after: 100 },
+              }),
+              new Paragraph({
+                children: [new TextRun({ text: body, size: 24 })],
+                spacing: { after: 300 },
+              }),
+            ];
+          }).flat(),
+        },
+      ],
+    });
+
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, `SLR_Report_${projectId}.docx`);
+  };
 
   const handleGenerateRQAnswers = () => {
     // Simulate generating answers to research questions
@@ -246,7 +462,7 @@ export default function ProjectPhase3Page() {
     setIsThinking(true);
 
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/rag_chat", {
+      const res = await fetch(`${BASE_URL}/rag_chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: projectId, query }),
@@ -357,7 +573,25 @@ export default function ProjectPhase3Page() {
                           <div className="mt-4 p-4 bg-white rounded-md border">
                             <h4 className="text-lg font-semibold mb-2">Generated Report</h4>
                             <div className="max-h-[400px] overflow-y-auto p-4 border rounded-md bg-gray-50">
-                              <div className="whitespace-pre-wrap text-sm text-gray-800">{renderFormattedReport(generatedReport)}</div>
+                              {/* <div className="whitespace-pre-wrap text-sm text-gray-800">{renderFormattedReport(generatedReport)}</div> */}
+                              <div className="prose prose-sm md:prose md:prose-blue max-w-none">
+                                <ReactMarkdown
+                                  // GitHub-flavored Markdown: tables, lists, etc.
+                                  remarkPlugins={[remarkGfm]}
+                                  // Adds ids to headings and clickable anchors
+                                  rehypePlugins={[rehypeSlug, rehypeAutolinkHeadings]}
+                                  components={{
+                                    h2: (props) => <h2 className="mt-6 scroll-m-20 text-2xl font-bold" {...props} />,
+                                    h3: (props) => <h3 className="mt-5 scroll-m-20 text-xl font-semibold" {...props} />,
+                                    p: (props) => <p className="leading-7" {...props} />,
+                                    li: (props) => <li className="my-1" {...props} />,
+                                    a: (props) => <a className="text-blue-600 underline" target="_blank" rel="noreferrer" {...props} />,
+                                    code: (props) => <code className="rounded bg-gray-100 px-1 py-0.5" {...props} />,
+                                  }}
+                                >
+                                  {generatedReport /* from step 2; or just generatedReport if you skip citations */}
+                                </ReactMarkdown>
+                              </div>
                             </div>
                           </div>
                         ) : (
@@ -394,6 +628,40 @@ export default function ProjectPhase3Page() {
                             </Button>
 
                           </div>
+                        )}
+                        {reportGenerated && (
+                          <div className="mt-6 space-y-4">
+                            <label className="block text-sm font-medium text-gray-700">
+                              Suggest refinements to improve this report:
+                            </label>
+                            <textarea
+                              value={refinementPrompt}
+                              onChange={(e) => setRefinementPrompt(e.target.value)}
+                              rows={4}
+                              className="w-full border rounded-md p-2 text-sm text-gray-700"
+                              placeholder="e.g., Make the report more concise and add a summary of findings at the end."
+                            />
+
+                            <Button onClick={handleRefineReport} disabled={!refinementPrompt.trim() || isRefining} className="gap-2">
+                              {isRefining ? (
+                                <>
+                                  <Sparkles className="h-4 w-4 animate-spin" />
+                                  Refining...
+                                </>
+                              ) : (
+                                <>
+                                  <Sparkles className="h-4 w-4" />
+                                  Refine Report
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        )}
+                        {reportGenerated && generatedReport && (
+                          <Button onClick={handleDownloadDocx} className="gap-2 mt-4">
+                            <FileText className="h-4 w-4" />
+                            Download as Word Document
+                          </Button>
                         )}
                       </div>
                     </div>

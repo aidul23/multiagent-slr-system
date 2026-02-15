@@ -6,60 +6,6 @@ import re
 key = os.getenv("API-KEY")
 api_key = key
 
-# def extract_search_string(content):
-#     possible_operators = ['AND', 'OR', 'NOT', '"']
-#     for line in content.split('\n'):
-#         if any(op in line for op in possible_operators):
-#             return line
-#     return content
-
-# def generate_search_string_with_gpt(objective, research_questions, model):
-#     """
-#     Generates a search string using OpenAI's API based on a research objective and questions.
-#     """
-#     headers = {
-#         "Authorization": f"Bearer {api_key}",
-#         "Content-Type": "application/json"
-#     }
-    
-#     # Updated prompt with explicit instructions for using logical operators
-#     combined_prompt = f"""
-#     Given the research objective: '{objective}', and the following research questions: {', '.join(research_questions)}, 
-#     generate concise search strings for identifying relevant literature for a literature review. 
-#     Use logical operators like AND, OR group terms meaningfully:
-#     - Use `AND` to combine different concepts.
-#     - Use `OR` to group synonyms or alternative terms in parentheses.
-#     - Use only two words with one `OR`.
-#     - Enclose terms in double quotes.
-#     Ensure the output follows this format:
-#     ("term1" OR "term2") AND ("term3" OR "term4")
-#     """
-    
-#     data = {
-#         "model": model,
-#         "messages": [
-#             {"role": "system", "content": "You are an expert in generating search strings for research purposes."},
-#             {"role": "user", "content": combined_prompt}
-#         ],
-#         "temperature": 0.7
-#     }
-    
-#     # Send request to OpenAI API
-#     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, data=json.dumps(data))
-    
-#     if response.status_code == 200:
-#         # Parse the response and extract the generated search string
-#         result = response.json()
-#         content = result['choices'][0]['message']['content']
-#         print(f"search content: {content}")
-#         search_string = extract_search_string(content)
-#         print(f"extract search content: {search_string}")
-#         return search_string.strip()
-#     else:
-#         # Handle errors gracefully
-#         print(f"Error: {response.status_code}")
-#         print(response.text)
-#         return "An error occurred while generating the search string."
 
 def extract_pico_elements(objective, research_questions, model):
     """
@@ -98,16 +44,19 @@ def extract_pico_elements(objective, research_questions, model):
         "temperature": 0.5
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, data=json.dumps(data))
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions", headers=headers, data=json.dumps(data))
 
     if response.status_code == 200:
         result = response.json()
         extracted_pico = result['choices'][0]['message']['content']
-        
+
         try:
             # Ensure the response is a valid JSON format
-            extracted_pico = re.search(r"\{.*\}", extracted_pico, re.DOTALL).group(0)
-            pico_dict = json.loads(extracted_pico)  # Convert JSON string to dictionary
+            extracted_pico = re.search(
+                r"\{.*\}", extracted_pico, re.DOTALL).group(0)
+            # Convert JSON string to dictionary
+            pico_dict = json.loads(extracted_pico)
             return pico_dict
         except (json.JSONDecodeError, AttributeError):
             print("❌ Failed to parse valid JSON from response.")
@@ -117,6 +66,8 @@ def extract_pico_elements(objective, research_questions, model):
         print(f"❌ OpenAI API Error: {response.status_code}")
         print(response.text)
         return {"error": "Failed to extract PICO elements"}
+
+#research questions: {', '.join(research_questions)}, 
 
 def extract_elements_by_strategy(objective, research_questions, model, search_strategy):
     """
@@ -128,7 +79,8 @@ def extract_elements_by_strategy(objective, research_questions, model, search_st
     }
 
     prompt_content = f"""
-    Given the research objective: '{objective}' and the research questions: {', '.join(research_questions)}, 
+    Given the research objective: '{objective}' 
+    Research Questions: {json.dumps(research_questions, indent=2)}
     extract the key elements based on the **{search_strategy}** framework.
 
     **{search_strategy} Elements:**
@@ -155,25 +107,30 @@ def extract_elements_by_strategy(objective, research_questions, model, search_st
         "temperature": 0.5
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, data=json.dumps(data))
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions", headers=headers, data=json.dumps(data))
 
     if response.status_code == 200:
         result = response.json()
         extracted_elements = result['choices'][0]['message']['content']
-        
+
         try:
             # Ensure the response is valid JSON
-            extracted_elements = re.search(r"\{.*\}", extracted_elements, re.DOTALL).group(0)
-            elements_dict = json.loads(extracted_elements)  # Convert JSON string to dictionary
+            extracted_elements = re.search(
+                r"\{.*\}", extracted_elements, re.DOTALL).group(0)
+            # Convert JSON string to dictionary
+            elements_dict = json.loads(extracted_elements)
             return elements_dict
         except (json.JSONDecodeError, AttributeError):
             print("❌ Failed to parse valid JSON from response.")
-            print(f"Raw API Response:\n{extracted_elements}")  # Debugging output
+            # Debugging output
+            print(f"Raw API Response:\n{extracted_elements}")
             return {"error": f"Invalid {search_strategy} response format"}
     else:
         print(f"❌ OpenAI API Error: {response.status_code}")
         print(response.text)
         return {"error": f"Failed to extract {search_strategy} elements"}
+
 
 def generate_search_string_with_gpt(objective, research_questions, model, search_strategy):
     """
@@ -181,7 +138,8 @@ def generate_search_string_with_gpt(objective, research_questions, model, search
     """
 
     # Step 1: Extract relevant elements based on the search strategy
-    extracted_elements = extract_elements_by_strategy(objective, research_questions, model, search_strategy)
+    extracted_elements = extract_elements_by_strategy(
+        objective, research_questions, model, search_strategy)
 
     if "error" in extracted_elements:
         return f"Failed to extract {search_strategy} elements. Search query generation aborted."
@@ -191,35 +149,58 @@ def generate_search_string_with_gpt(objective, research_questions, model, search
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
+    
+    keywords = extract_keywords(objective, research_questions, model)
 
     # Step 3: Build a dynamic prompt for query generation
     prompt_content = f"""
-    Given the research objective: '{objective}' and the following research questions: {', '.join(research_questions)}, 
-    generate a structured search string using the **{search_strategy}** framework.
+    Given the research objective: '{objective}',
+    research questions: {', '.join(research_questions)},
+    Given these keywords: {keywords}, 
+    generate a compact, Scopus-compatible search string using the **{search_strategy}** framework.
 
     **Extracted {search_strategy} Elements:**
     {json.dumps(extracted_elements, indent=2)}
 
-    **Search Query Requirements:**
-    - Use logical operators: `AND`, `OR`, and parentheses for grouping.
-    - Use `"double quotes"` for exact phrases.
-    - Ensure the query is structured according to the {search_strategy} methodology.
-    - The search string should be clear, concise, and suitable for academic literature databases.
+    **Search Query Instructions:**
+    - Use only relevant **keywords**, not full phrases.
+    - Each term should be **1–2 words** only (e.g., `"bias"`, `"media"`), no long phrases.
+    - Use logical operators `AND`, `OR`, and grouping with `()`.
+    - Use **double quotes** only around short phrases (not full sentences).
+    - **Avoid:** stopwords (e.g., "the", "in", "on"), special characters, or sentence fragments.
+    - Do **not exceed 200 characters** total.
+    - Return only the query string in the format:
 
-    **Example Output Format:**
-    ("Term1" OR "Term2") AND ("Term3" OR "Term4") AND ("Term5" OR "Term6")
+    Example:
+    ("AI" OR "machine learning") AND ("bias" OR "media" OR "framing")
     """
+    
+    system_msg = {
+    "role": "system",
+    "content": f"""
+        You are an expert in constructing Scopus-compatible search queries.
+        Rules:
+        - ALWAYS include critical keywords from the research objective, questions.
+        - Each research question or purpose must contribute at least one keyword.
+        - Allow multi-word technical terms up to 3–4 words if they represent standard concepts
+        (e.g., "systematic literature review", "natural language processing").
+        - Do not drop domain-specific terminology, even if it makes the query longer.
+        - Use logical operators (AND/OR) and grouping properly.
+        - Keep total query length under 100 characters.
+        """
+    }
 
     data = {
         "model": model,
         "messages": [
-            {"role": "system", "content": f"You are an expert in formulating precise literature search queries using the {search_strategy} method."},
+            system_msg,
             {"role": "user", "content": prompt_content}
         ],
         "temperature": 0.7
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, data=json.dumps(data))
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions", headers=headers, data=json.dumps(data))
 
     if response.status_code == 200:
         result = response.json()
@@ -227,15 +208,45 @@ def generate_search_string_with_gpt(objective, research_questions, model, search
         print(f"Generated Query ({search_strategy}): {content}")
 
         # Extract and clean the search query
-        search_string = extract_search_string(content)
-        print(f"Formatted Query: {search_string}")
+        raw_search_string = extract_search_string(content)
+        cleaned = clean_query_terms(raw_search_string)
+        simplified = simplify_search_query(cleaned)
 
-        return search_string.strip()
+        print("Simplified Query:", simplified)
+        return simplified.strip()
     else:
         print(f"Error: {response.status_code}")
         print(response.text)
         return f"An error occurred while generating the {search_strategy} search string."
-    
+
+
+def extract_search_string(response_text):
+    lines = response_text.strip().split("\n")
+    for line in lines:
+        if line.startswith("(") and ")" in line:
+            return line
+    return response_text.strip()
+
+def clean_query_terms(query, max_words=3):
+    terms = re.findall(r'"(.*?)"', query)
+    clean_terms = [t for t in terms if len(t.split()) <= max_words]
+    for t in terms:
+        if t not in clean_terms:
+            query = query.replace(f'"{t}"', '')
+    return query
+
+def simplify_search_query(query, max_groups=3):
+    """
+    Keep up to max_groups OR groups joined with AND.
+    """
+    or_groups = re.findall(r'\(([^()]+ OR [^()]+)\)', query)
+    if len(or_groups) >= max_groups:
+        return " AND ".join(f'({grp})' for grp in or_groups[:max_groups])
+    elif len(or_groups) > 0:
+        return " AND ".join(f'({grp})' for grp in or_groups)
+    else:
+        return query
+
 def refine_search_string_with_gpt(search_string, feedback, model):
     """
     Uses GPT to refine an existing search string based on user feedback.
@@ -272,88 +283,38 @@ def refine_search_string_with_gpt(search_string, feedback, model):
         "temperature": 0.5
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, data=json.dumps(data))
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions", headers=headers, data=json.dumps(data))
 
     if response.status_code == 200:
         result = response.json()
-        refined_query = extract_search_string(result['choices'][0]['message']['content'])
+        refined_query = extract_search_string(
+            result['choices'][0]['message']['content'])
         return refined_query.strip()
     else:
         return "Error refining search string."
 
-# def generate_search_string_with_gpt(objective, research_questions, model, search_strategy):
-#     """
-#     Generates a structured PICO-based search string by first extracting PICO elements and then generating a search query.
-#     """
-#     # First, extract PICO elements from the objective and research questions
-#     pico_elements = extract_pico_elements(objective, research_questions, model)
+def extract_keywords(objective, research_questions, model):
+    prompt = f"""
+    Extract the MOST important keywords (1–4 words each) from the following text:
 
-#     if "error" in pico_elements:
-#         return "Failed to extract PICO elements. Search query generation aborted."
+    Objective: {objective}
 
-#     # Extract PICO components
-#     population = pico_elements.get("Population", [])
-#     intervention = pico_elements.get("Intervention", [])
-#     comparison = pico_elements.get("Comparison", [])
-#     outcome = pico_elements.get("Outcome", [])
+    Research Questions: {json.dumps(research_questions, indent=2)}
 
-#     headers = {
-#         "Authorization": f"Bearer {api_key}",
-#         "Content-Type": "application/json"
-#     }
-
-#     # Construct the prompt with extracted PICO elements
-#     prompt_content = f"""
-#     Given the research objective: '{objective}' and the following research questions: {', '.join(research_questions)}, 
-#     generate a structured search string using the PICO method.
-
-#     **PICO Breakdown:**
-#     - **Population (P):** {', '.join(population)}
-#     - **Intervention (I):** {', '.join(intervention)}
-#     - **Comparison (C):** {', '.join(comparison)}
-#     - **Outcome (O):** {', '.join(outcome)}
-
-#     **Search Query Requirements:**
-#     - Use logical operators: `AND`, `OR`, and parentheses for grouping.
-#     - Use `"double quotes"` for exact phrases.
-#     - Include `OR` for synonyms or alternative terms inside parentheses.
-#     - Ensure the search query is no to big or complex.
-#     - Ensure all four PICO components are integrated into the query.
-
-#     **Example Output Format:**
-#     ("Population1" OR "Population2") AND ("Intervention1" OR "Intervention2") AND 
-#     ("Comparison1" OR "Comparison2") AND ("Outcome1" OR "Outcome2")
-#     """
-
-#     data = {
-#         "model": model,
-#         "messages": [
-#             {"role": "system", "content": "You are an expert in formulating precise literature search queries using the PICO method."},
-#             {"role": "user", "content": prompt_content}
-#         ],
-#         "temperature": 0.7
-#     }
-
-#     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, data=json.dumps(data))
-
-#     if response.status_code == 200:
-#         result = response.json()
-#         content = result['choices'][0]['message']['content']
-#         print(f"Generated Query: {content}")
-
-#         # Extract and clean the search query
-#         search_string = extract_search_string(content)
-#         print(f"Formatted Query: {search_string}")
-
-#         return search_string.strip()
-#     else:
-#         print(f"Error: {response.status_code}")
-#         print(response.text)
-#         return "An error occurred while generating the PICO search string."
-
-def extract_search_string(response_text):
+    Return ONLY a JSON list of keywords, like this:
+    ["keyword1", "keyword2", "keyword phrase3"]
     """
-    Extracts the structured search string from the response text.
-    """
-    match = re.search(r'\(.*\)', response_text, re.DOTALL)
-    return match.group(0) if match else response_text
+    data = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are an expert keyword extractor for academic search queries."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3
+    }
+
+    response = requests.post("https://api.openai.com/v1/chat/completions",
+                             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                             data=json.dumps(data))
+    return response.json()["choices"][0]["message"]["content"]

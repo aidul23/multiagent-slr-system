@@ -11,9 +11,10 @@ import { ProgressBar } from "@/components/progress-bar"
 import { ProjectHeader } from "@/components/project-header"
 import { DataExtractionConfig } from "@/components/data-extraction-config"
 import { ModelSelector } from "@/components/model-selector"
-import { ArrowRight, FileUp, Download, Database, Check, FileText, Eye, Plus, TableIcon, Trash } from "lucide-react"
+import { ArrowRight, FileUp, Download, Database, Check, FileText, Eye, Plus, TableIcon, Trash, SkipForward } from "lucide-react"
 import axios from 'axios';
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
+import { BASE_URL } from "../../../../lib/url";
 
 export default function ProjectPhase2Page() {
   const router = useRouter()
@@ -79,6 +80,9 @@ export default function ProjectPhase2Page() {
           id: paper.doi || paper.key || `paper-${index}`,
         }));
         setPapers(parsedPapers);
+        if (parsedPapers.length === 0) {
+          setCurrentStep(1); // Skip to Upload Paper tab
+        }
       } catch (err) {
         console.error("Failed to parse retrieved papers:", err);
       }
@@ -94,7 +98,7 @@ export default function ProjectPhase2Page() {
 
     const fetchUploadedPdfs = async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:5000/api/list_uploaded_pdfs/${projectId}`);
+        const res = await fetch(`${BASE_URL}/list_uploaded_pdfs/${projectId}`);
         const files = await res.json();
         const fileObjs = files.map((name) => new File([], name));
         setPdfFiles(fileObjs);
@@ -131,7 +135,16 @@ export default function ProjectPhase2Page() {
     if (!projectId || !pdfFiles.length) return;
 
     for (const file of pdfFiles) {
-      const matchedPaper = papers.find((p) => file.name.includes(p.title?.slice(0, 10) || "")) || papers[0]; // naive match
+      const matchedPaper =
+        papers.find((p) => file.name.includes(p.title?.slice(0, 10) || "")) ||
+        uploadedPapers.find((p) => file.name.includes(p.title?.slice(0, 10) || "")) ||
+        {
+          title: file.name,
+          creator: "Unknown",
+          year: "N/A",
+          doi: "N/A",
+          link: "",
+        };
 
       const formData = new FormData();
       formData.append("pdf", file);
@@ -145,7 +158,7 @@ export default function ProjectPhase2Page() {
       setUploadStatus((prev) => ({ ...prev, [file.name]: "pending" }))
 
       try {
-        const res = await axios.post("http://127.0.0.1:5000/api/upload_pdf", formData, {
+        const res = await axios.post(`${BASE_URL}/upload_pdf`, formData, {
           headers: { "Content-Type": "multipart/form-data" },
         })
 
@@ -163,7 +176,7 @@ export default function ProjectPhase2Page() {
 
   const handleDeletePdf = async (fileName) => {
     try {
-      const res = await fetch(`http://127.0.0.1:5000/api/delete_pdf?project_id=${projectId}&file_name=${fileName}`, {
+      const res = await fetch(`${BASE_URL}/delete_pdf?project_id=${projectId}&file_name=${fileName}`, {
         method: "DELETE",
       });
 
@@ -193,7 +206,7 @@ export default function ProjectPhase2Page() {
     console.log("Extracting data for project ID:", projectId);
 
     try {
-      const response = await fetch("http://127.0.0.1:5000/api/extract_data", {
+      const response = await fetch(`${BASE_URL}//extract_data`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -251,6 +264,25 @@ export default function ProjectPhase2Page() {
     router.push(`/projects/${projectId}/phase3`)
   }
 
+  const handleClearAndRestart = () => {
+    if (confirm("Are you sure you want to clear all retrieved papers and restart Phase 1?")) {
+      // Clear relevant localStorage keys
+      localStorage.removeItem(`project_${projectId}_retrievedPapers`);
+      localStorage.removeItem(`project_${projectId}_selectedPapers`);
+      localStorage.removeItem(`project_${projectId}_phase2`);
+
+      // Optionally clear state (not strictly necessary since you'll redirect)
+      setPapers([]);
+      setSelectedPapers([]);
+      setUploadedPapers([]);
+      setPdfFiles([]);
+      setUploadStatus({});
+
+      // Redirect to phase 1
+      router.push(`/projects/${projectId}/phase1`);
+    }
+  };
+
   const toTitleCase = (str) =>
     str
       .toLowerCase()
@@ -261,6 +293,15 @@ export default function ProjectPhase2Page() {
   if (!project) {
     return null // Loading state
   }
+
+  const showSelectionStep = papers.length > 0;
+
+  const visibleSteps = steps.filter((step, index) => {
+    // Exclude "Paper Selection" (index 0) if no papers
+    return showSelectionStep || index !== 0;
+  });
+
+  const adjustedStepIndex = showSelectionStep ? currentStep : currentStep - 1;
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -274,13 +315,18 @@ export default function ProjectPhase2Page() {
           backLink={`/projects/${projectId}/phase1`}
         />
 
+        {/*
         <ProgressBar steps={steps} currentStep={currentStep} />
+        */}
+        <ProgressBar steps={visibleSteps} currentStep={adjustedStepIndex} />
 
         <Tabs defaultValue="selection" value={`step${currentStep}`}>
-          <TabsList className="grid grid-cols-4 mb-8">
-            <TabsTrigger value="step0" disabled={currentStep !== 0}>
-              Paper Selection
-            </TabsTrigger>
+          <TabsList className={`grid ${papers.length > 0 ? "grid-cols-4" : "grid-cols-3"} mb-8`}>
+            {papers.length > 0 && (
+              <TabsTrigger value="step0" disabled={currentStep !== 0}>
+                Paper Selection
+              </TabsTrigger>
+            )}
             <TabsTrigger value="step1" disabled={currentStep < 1}>
               Paper Upload
             </TabsTrigger>
@@ -292,64 +338,90 @@ export default function ProjectPhase2Page() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="step0">
-            <Card>
-              <CardHeader>
-                <CardTitle>Select Relevant Papers</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-12">Select</TableHead>
-                        <TableHead>Title</TableHead>
-                        <TableHead>Authors</TableHead>
-                        <TableHead>Year</TableHead>
-                        <TableHead>Publication Name</TableHead>
-                        <TableHead>Citations</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {papers.map((paper, index) => (
-                        <TableRow key={`${paper.doi || 'unknown'}-${index}`}>
-                          <TableCell>
-                            <Button
-                              variant={selectedPapers.includes(paper.id) ? "default" : "outline"}
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                              onClick={() => togglePaperSelection(paper.id)}
-                            >
-                              {selectedPapers.includes(paper.id) ? (
-                                <Check className="h-4 w-4" />
-                              ) : (
-                                <Plus className="h-4 w-4" />
-                              )}
-                            </Button>
-                          </TableCell>
-                          <TableCell className="font-medium">{toTitleCase(paper.title)}</TableCell>
-                          <TableCell>{paper.creator}</TableCell>
-                          <TableCell>{paper.year}</TableCell>
-                          <TableCell>{paper.publicationName}</TableCell>
-                          <TableCell>{paper.citedby_count}</TableCell>
+          {papers.length > 0 && (
+            <TabsContent value="step0">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Select Relevant Papers</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-12">Select</TableHead>
+                          <TableHead>Title</TableHead>
+                          <TableHead>Authors</TableHead>
+                          <TableHead>Year</TableHead>
+                          <TableHead>Publication Name</TableHead>
+                          <TableHead>Citations</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                      </TableHeader>
+                      <TableBody>
+                        {papers.map((paper, index) => (
+                          <TableRow key={`${paper.doi || 'unknown'}-${index}`}>
+                            <TableCell>
+                              <Button
+                                variant={selectedPapers.includes(paper.id) ? "default" : "outline"}
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={() => togglePaperSelection(paper.id)}
+                              >
+                                {selectedPapers.includes(paper.id) ? (
+                                  <Check className="h-4 w-4" />
+                                ) : (
+                                  <Plus className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </TableCell>
+                            <TableCell className="font-medium">{toTitleCase(paper.title)}</TableCell>
+                            <TableCell>{paper.creator}</TableCell>
+                            <TableCell>{paper.year}</TableCell>
+                            <TableCell>{paper.publicationName}</TableCell>
+                            <TableCell>{paper.citedby_count}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
 
-                <div className="mt-4 text-sm text-gray-500">
-                  Selected {selectedPapers.length} of {papers.length} papers
-                </div>
-              </CardContent>
-              <CardFooter className="flex justify-end">
-                <Button onClick={handleUploadPaper} disabled={selectedPapers.length === 0} className="gap-2">
-                  <FileUp className="h-4 w-4" />
-                  Upload Selected Papers
-                </Button>
-              </CardFooter>
-            </Card>
-          </TabsContent>
+                  <div className="mt-4 text-sm text-gray-500">
+                    Selected {selectedPapers.length} of {papers.length} papers
+                  </div>
+                </CardContent>
+                <CardFooter className="flex justify-end">
+                  <div className="flex gap-4">
+                    <Button
+                      variant="destructive"
+                      onClick={handleClearAndRestart}
+                      className="gap-2"
+                    >
+                      <Trash className="h-4 w-4" />
+                      Clear Papers & Restart
+                    </Button>
+
+                    <Button
+                      onClick={handleUploadPaper}
+                      disabled={selectedPapers.length === 0}
+                      className="gap-2"
+                    >
+                      <FileUp className="h-4 w-4" />
+                      Upload Selected Papers
+                    </Button>
+
+                    <Button
+                      variant="secondary"
+                      onClick={() => setCurrentStep(1)} // ⬅️ directly skip to "Upload" step
+                      className="gap-2"
+                    >
+                      <SkipForward className="h-4 w-4" />
+                      Skip
+                    </Button>
+                  </div>
+                </CardFooter>
+              </Card>
+            </TabsContent>
+          )}
 
           <TabsContent value="step1">
             <Card>
@@ -362,7 +434,10 @@ export default function ProjectPhase2Page() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Paper Title</TableHead>
+                          {papers.length > 0 ? <TableHead>Paper Title</TableHead> : (
+                            <TableHead>Upload papers for systematic literature review</TableHead>
+                          )}
+
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -378,7 +453,7 @@ export default function ProjectPhase2Page() {
                   <div className="bg-gray-50 p-4 rounded-md border border-dashed border-gray-300 text-center">
                     <FileText className="h-8 w-8 mx-auto text-gray-400" />
                     <p className="mt-2 text-sm text-gray-600">
-                      Drag and drop additional PDF files here, or click to browse
+                      Drag and drop papers's PDF files here, or click to browse
                     </p>
 
                     <input
@@ -423,7 +498,7 @@ export default function ProjectPhase2Page() {
                                     <>
                                       <span className="text-green-600 text-xs">Uploaded</span>
                                       <a
-                                        href={`http://127.0.0.1:5000/uploads/${projectId}/${file.name}`}
+                                        href={`${BASE_URL}/uploads/${projectId}/${file.name}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                       >
@@ -466,7 +541,9 @@ export default function ProjectPhase2Page() {
                 <Button variant="outline" onClick={() => setCurrentStep(0)}>
                   Back
                 </Button>
-                <Button onClick={handleConfigureExtraction} disabled={uploadedPapers.length === 0} className="gap-2">
+                <Button onClick={handleConfigureExtraction} disabled={
+                  Object.values(uploadStatus).filter((status) => status === "uploaded").length === 0
+                } className="gap-2">
                   <TableIcon className="h-4 w-4" />
                   Configure Data Extraction
                 </Button>
@@ -562,7 +639,7 @@ export default function ProjectPhase2Page() {
 
                   <div className="flex justify-center gap-4">
                     <a
-                      href={`http://127.0.0.1:5000/api/download_csv?project_id=${projectId}&file_name=extracted_data.csv`}
+                      href={`${BASE_URL}/download_csv?project_id=${projectId}&file_name=extracted_data.csv`}
                       target="_blank"
                       rel="noopener noreferrer"
                     >

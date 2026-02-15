@@ -14,6 +14,7 @@ import { PhaseHeader } from "@/components/phase-header"
 import { ProgressBar } from "@/components/progress-bar"
 import { Sparkles, Lock, Unlock, Search, Filter } from "lucide-react"
 
+
 export default function Phase1Page() {
   const router = useRouter()
   const [currentStep, setCurrentStep] = useState(0)

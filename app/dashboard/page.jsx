@@ -20,6 +20,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { UserNav } from "@/components/user-nav"
 import { Plus, FileText, Calendar, ArrowRight, Trash2 } from "lucide-react"
 import axios from 'axios';
+import { BASE_URL } from "../../lib/url";
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -32,7 +33,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const fetchProjects = async (userId) => {
       try {
-        const response = await axios.get('http://127.0.0.1:5000/api/get_projects', {
+        const response = await axios.get(`${BASE_URL}/get_projects`, {
           params: { user_id: userId },
         });
 
@@ -87,7 +88,7 @@ export default function DashboardPage() {
       };
 
       // Call backend API
-      const response = await axios.post("http://127.0.0.1:5000/api/create_project", payload);
+      const response = await axios.post(`${BASE_URL}/create_project`, payload);
 
       if (response.status === 201) {
         // Add the newly created project to the state
@@ -107,7 +108,7 @@ export default function DashboardPage() {
     if (!confirm("Are you sure you want to delete this project? This action cannot be undone.")) return;
 
     try {
-      const response = await axios.delete(`http://127.0.0.1:5000/api/delete_project/${projectIdToDelete}`);
+      const response = await axios.delete(`${BASE_URL}/delete_project/${projectIdToDelete}`);
       if (response.status === 200) {
         // Remove from local state
         setProjects((prev) => prev.filter((p) => p.project_id !== projectIdToDelete));

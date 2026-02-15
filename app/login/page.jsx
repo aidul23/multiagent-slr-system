@@ -10,6 +10,7 @@ import { supabase } from "../../lib/supabaseClient";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { LogIn } from "lucide-react"
+import { BASE_URL } from "../../lib/url";
 
 export default function LoginPage() {
   const router = useRouter()
@@ -40,7 +41,7 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/login", {
+      const res = await fetch(`${BASE_URL}/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -94,7 +95,7 @@ export default function LoginPage() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: "http://86.50.169.115:50004/auth/callback",
       },
     })
 

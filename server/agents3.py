@@ -119,7 +119,7 @@ def search_elsevier(search_string, start_year, end_year, limit, is_english, is_p
     if not limit or limit > 500:
         limit = 500  
 
-    print(f"Searching Elsevier with: English={is_english}, Peer-reviewed={is_peer_reviewed}, Keywords={keywords}, Cited={is_cited}")
+    print(f"Searching Elsevier with: English={is_english},Search String={search_string} Peer-reviewed={is_peer_reviewed}, Keywords={keywords}, Cited={is_cited}")
 
     # Construct query with proper Boolean syntax
     
@@ -129,9 +129,9 @@ def search_elsevier(search_string, start_year, end_year, limit, is_english, is_p
     #     query = f'TITLE-ABS-KEY({search_string}) AND PUBYEAR = {start_year}'
         
     if end_year and start_year != end_year:
-        query_parts = [f'TITLE-ABS-KEY({search_string})', f'PUBYEAR > {start_year}', f'PUBYEAR < {end_year}']
+        query_parts = [f'TITLE-ABS({search_string})', f'PUBYEAR > {start_year}', f'PUBYEAR < {end_year}']
     else:
-        query_parts = [f'TITLE-ABS-KEY({search_string})', f'PUBYEAR = {start_year}']
+        query_parts = [f'TITLE-ABS({search_string})', f'PUBYEAR = {start_year}']
 
     # Add English language filter if needed
     if is_english:
@@ -146,6 +146,8 @@ def search_elsevier(search_string, start_year, end_year, limit, is_english, is_p
     max_per_request = 25  # Elsevier allows max 25 per request
     all_papers = []
     
+    seen_dois = set()
+    seen_titles = set()
 
     while total_fetched < limit:
         remaining = limit - total_fetched
@@ -210,9 +212,20 @@ def search_elsevier(search_string, start_year, end_year, limit, is_english, is_p
                     "abstract": abstract_text
                 }
                 
-                print(parsed_paper)
-                
-                print(f"{parsed_paper['citedby_count']}")
+                doi = paper.get("prism:doi", "").strip()
+                title = paper.get("dc:title", "").strip().lower()
+
+                # Skip if already seen
+                if doi and doi in seen_dois:
+                    continue
+                if not doi and title in seen_titles:
+                    continue
+
+                # Add to seen sets
+                if doi:
+                    seen_dois.add(doi)
+                else:
+                    seen_titles.add(title)
 
                 all_papers.append(parsed_paper)
 
@@ -234,7 +247,6 @@ def search_elsevier(search_string, start_year, end_year, limit, is_english, is_p
 
 def search_arxiv(search_string, start_year, end_year, limit):
     search_query = f"all:{search_string}"
-    url = "http://export.arxiv.org/api/query"
      # Ensure that start_year is always used in the query
     if end_year:
         search_query += f" AND submittedDate:[{start_year}01010000 TO {end_year}12312359]"

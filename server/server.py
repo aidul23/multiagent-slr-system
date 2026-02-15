@@ -1,6 +1,5 @@
 from dotenv import load_dotenv
 import os
-import tempfile
 from flask import Flask, render_template, send_file, send_from_directory, request, jsonify
 import datetime
 from agents import generate_research_questions_and_purpose_with_gpt, generate_abstract_with_openai, generate_summary_conclusion, generate_introduction_summary_with_openai, generate_research_objective_with_gpt, generate_research_report
@@ -10,7 +9,6 @@ from agents3 import fetch_papers, save_papers_to_csv, search_elsevier, search_ar
 from agents4 import filter_papers_with_gpt_turbo, generate_response_gpt4_turbo, extract_structured_data_from_ai
 from flask_cors import CORS, cross_origin # type: ignore
 from rag_engine import query_rag_system
-import requests
 from datetime import datetime
 from flask_socketio import SocketIO, emit # type: ignore
 from worlflow import research_workflow, ResearchState
@@ -28,9 +26,9 @@ from openai import OpenAI
 import shutil
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
+from deep_researcher import run_deepresearch_fallback
 
 load_dotenv()
-
 
 openai_key = os.getenv("API-KEY")
 api_key = openai_key
@@ -40,7 +38,7 @@ key = os.getenv("ELSEVIER_API_KEY")
 client = OpenAI(api_key = api_key)
 
 app = Flask(__name__, static_folder='dist')
-CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}})
+CORS(app, resources={r"/*": {"origins": "*"}})
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # SQLite database
@@ -58,6 +56,15 @@ class User(db.Model):
 with app.app_context():
     db.create_all()
 
+# MongoDB configuration
+app.config["MONGO_URI"] = os.getenv("MONGO_URI")
+mongo = PyMongo(app)
+
+users_collection = mongo.db.users
+projects_collection = mongo.db.projects
+
+print("MongoDB connection established successfully!")
+
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.get_json()
@@ -73,7 +80,14 @@ def register():
     db.session.add(new_user)
     db.session.commit()
 
-    return jsonify({'message': 'User registered successfully', 'user': {'name': name, 'email': email}})
+    return jsonify({
+    'message': 'User registered successfully',
+    'user': {
+        'id': str(new_user.id),  # 👈 Add this and convert to string
+        'name': name,
+        'email': email
+    }
+})
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -88,12 +102,11 @@ def login():
     return jsonify({
         'message': 'Login successful',
         'user': {
-            'id': user.id,  # 👈 Add this
+            'id': str(user.id),  # 👈 Add this
             'name': user.name,
             'email': user.email
         }
     })
-
 
 
 UPLOAD_FOLDER = "uploads"
@@ -115,20 +128,11 @@ if os.path.exists(EXTRACTED_DATA_FILE):
             print("⚠️ Failed to parse extracted_data.json")
 
 
-# MongoDB configuration
-app.config["MONGO_URI"] = os.getenv("MONGO_URI")
-mongo = PyMongo(app)
-
-users_collection = mongo.db.users
-projects_collection = mongo.db.projects
-
-print("MongoDB connection established successfully!")
-
 @app.route("/api/create_project", methods=["POST"])
 def create_project():
     try:
         data = request.json
-        user_id = data.get("user_id")
+        user_id = str(data.get("user_id"))  # force conversion to string
         project_name = data.get("project_name")
         description = data.get("description")
         review_type = data.get("review_type")
@@ -268,44 +272,6 @@ def load_data_from_json():
     else:
         extracted_data_store = {}
 
-def save_to_csv(data, project_id):
-    folder_path = os.path.join("data", project_id)
-    os.makedirs(folder_path, exist_ok=True)
-    csv_file = os.path.join(folder_path, "extracted_data.csv")
-
-    new_row = {
-        "Title": data[0],
-        "Abstract": data[1],
-        "Year": data[2],
-        "Publisher": data[3],
-        "Authors": data[4],
-        "DOI": data[5]
-    }
-
-    # Check for duplication
-    if os.path.isfile(csv_file):
-        try:
-            existing_df = pd.read_csv(csv_file, dtype=str, on_bad_lines='skip')
-            if not existing_df[existing_df["DOI"] == new_row["DOI"]].empty:
-                print(f"Duplicate found for DOI: {new_row['DOI']}")
-                return  # Skip duplicate
-        except Exception as e:
-            print("❌ Error reading CSV for deduplication check:", e)
-            return
-
-    # Write using csv.DictWriter to ensure quoting
-    file_exists = os.path.isfile(csv_file)
-    with open(csv_file, mode="a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=["Title", "Abstract", "Year", "Publisher", "Authors", "DOI"],
-            quoting=csv.QUOTE_ALL
-        )
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(new_row)
-
-
 @app.route("/api/get_csv", methods=["GET"])
 def get_csv():
     """Returns a list of CSV files for a given projectId."""
@@ -338,13 +304,10 @@ def download_csv():
 
     return send_from_directory(project_path, file_name, as_attachment=True)
 
-
 def generate_embedding(text, model="text-embedding-ada-002"):
     response = client.embeddings.create(input=text,
     model=model)
     return response.data[0].embedding
-
-
 
 @app.route("/api/upload_pdf", methods=["POST"])
 def upload_pdf():
@@ -403,9 +366,7 @@ def upload_pdf():
         "project_id": project_id
     })
 
-
-
-@app.route('/uploads/<project_id>/<filename>')
+@app.route('/api/uploads/<project_id>/<filename>')
 def uploaded_file(project_id, filename):
     return send_from_directory(os.path.join(UPLOAD_FOLDER, project_id), filename)
 
@@ -440,7 +401,6 @@ def save_to_csv(data_list, project_id):
 
         # Write extracted data as a new row
         writer.writerow(formatted_data)
-
 
 @app.route("/api/extract_data", methods=["POST"])
 def extract_data():
@@ -530,6 +490,8 @@ def generate_ai_report():
     data = request.json
     project_id = data.get("project_id")
     research_questions = data.get("research_questions", [])
+    objective = data.get("objective", "")
+    model="gpt-4o"
 
     if not project_id:
         return jsonify({"error": "Project ID is required"}), 400
@@ -537,7 +499,7 @@ def generate_ai_report():
         return jsonify({"error": "Valid research questions are required"}), 400
 
     # Call function from agents.py
-    report_result = generate_research_report(project_id, research_questions)
+    report_result = generate_research_report(project_id, research_questions, objective, model)
 
     return jsonify(report_result)
 
@@ -545,7 +507,7 @@ def generate_ai_report():
 def refine_report():
     data = request.json
     existing_report = data.get("existing_report")
-    user_feedback = data.get("user_feedback")
+    user_feedback = data.get("refinement_prompt")
 
     if not existing_report or not user_feedback:
         return jsonify({"error": "Existing report and feedback are required"}), 400
@@ -553,7 +515,7 @@ def refine_report():
     from agents import refine_research_report
     result = refine_research_report(existing_report, user_feedback)
 
-    return jsonify(result)
+    return jsonify({ "report": result })
 
 # Compile the graph
 
@@ -636,6 +598,8 @@ def generate_search_string_route():
         if not search_strategy:
             return jsonify({"error": "Search strategy is required."}), 400
 
+        print(f"{research_questions}")
+        
         # Generate search string using AI function
         search_string = generate_search_string_with_gpt(objective, research_questions, model, search_strategy)
 
@@ -717,22 +681,6 @@ def filter_papers_route():
     filtered_papers = filter_papers_with_gpt_turbo(search_string, papers, model)
     return jsonify(filtered_papers)
 
-# @socketio.on('answer_question')
-# def handle_answer_question(data):
-#     questions = data.get('questions')
-#     papers_info = data.get('papers_info', [])
-#     model = data.get('model')
-
-#     if not questions or not papers_info:
-#         emit('error', {"error": "Both questions and papers information are required."})
-#         return
-
-#     answers = []
-#     for question in questions:
-#         answer = generate_response_gpt4_turbo(question, papers_info, model)
-#         answers.append({"question": question, "answer": answer})
-
-#     emit('answers', {"answers": answers})
 
 @socketio.on('answer_question')
 def handle_answer_question(data):
@@ -768,6 +716,18 @@ def generate_elsevier_gpt4_response(question, papers_info, model):
 def generate_arxiv_gpt4_response(question, papers_info, model):
     return generate_response_gpt4_turbo(question, papers_info, model, "arXiv")
 
+@app.route("/api/rag_chat", methods=["POST"])
+def rag_chat():
+    data = request.json
+    project_id = data.get("project_id")
+    query = data.get("query")
+
+    if not project_id or not query:
+        return jsonify({"error": "project_id and query are required"}), 400
+
+    result = query_rag_system(project_id, query)
+    return jsonify(result)
+
 
 @app.route('/')
 def index():
@@ -780,166 +740,6 @@ def serve(path):
         return send_from_directory(app.static_folder, path)
     else:
         return send_from_directory(app.static_folder, 'index.html')
-
-@app.route('/api/generate-summary-abstract', methods=['POST'])
-def generate_summary_abstract():
-    try:
-        data = request.json
-
-        research_questions = data.get('research_questions', 'No research questions provided.')
-        objective = data.get('objective', 'No objective provided.')
-        search_string = data.get('search_string', 'No search string provided.')
-        model = data.get('model')
-
-        # Constructing the prompt for AI abstract generation
-        prompt = f"Based on the research questions '{research_questions}', the objective '{objective}', and the search string '{search_string}', generate a comprehensive abstract."
-
-        # Generate the abstract using OpenAI's GPT model
-        summary_abstract = generate_abstract_with_openai(prompt, model)
-
-        return jsonify({"summary_abstract": summary_abstract})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/generate-summary-conclusion", methods=["POST"])
-def generate_summary_conclusion_route():
-    data = request.json
-    papers_info = data.get("papers_info", [])
-    try:
-        summary_conclusion = generate_summary_conclusion(papers_info)
-        return jsonify({"summary_conclusion": summary_conclusion})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/generate-introduction-summary', methods=['POST'])
-def generate_introduction_summary():
-    try:
-        data = request.json
-        total_papers = len(data.get("all_papers", []))
-        filtered_papers_count = len(data.get("filtered_papers", []))
-        research_questions = data.get("research_questions", [])
-        objective = data.get("objective", "")
-        search_string = data.get("search_string", "")
-        answers = data.get("answers", [])
-        model = data.get('model')
-
-        # Constructing the introduction based on the provided data
-        prompt_intro = f"This document synthesizes findings from {total_papers} papers related to \"{search_string}\". Specifically, {filtered_papers_count} papers were thoroughly examined. The primary objective is {objective}."
-
-        prompt_questions = "\n\nResearch Questions:\n" + "\n".join([f"- {q}" for q in research_questions])
-
-        prompt_answers = "\n\nSummary of Findings:\n" + "\n".join([f"- {ans['question']}: {ans['answer'][:250]}..." for ans in answers])  # Brief summary of answers
-
-        prompt = prompt_intro + prompt_questions + prompt_answers + "\n\nGenerate a coherent introduction and summary based on this compilation."
-
-        # Generating the introduction summary using OpenAI's GPT model
-        introduction_summary = generate_introduction_summary_with_openai(prompt, model)
-
-        return jsonify({"introduction_summary": introduction_summary})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/generate-summary-all", methods=["POST"])
-def generate_summary_all_route():
-    data = request.json
-    objective = data.get("objective","")    
-    purpose_and_questions = data.get("purposeAndQuestions",[])   
-    search_string = data.get("search_string", "") 
-    fetch_papers = data.get("fetch_papers",[])    
-    selected_papers = data.get("slected_papers",[])  
-    answers = data.get("answers",[])    
-    abstract_summary = data.get("abstract_summary", "")
-    intro_summary = data.get("intro_summary", "")  # Corrected key to "intro_summary"
-    conclusion_summary = data.get("conclusion_summary", "")  # Corrected key to "conclusion_summary"
-
-
-
-    try:
-        primary_counts = 0  # Initialize a counter for the number of matching titles
-        secondary_counts = 0
-        specific_words = {"review", "systematic", "study", "survey", "mapping"}
-        for paper_array in fetch_papers:
-         for paper in paper_array:
-          title = paper.get("title", "").lower()
-          # Check if any word in the title matches any word in the search_string
-          if any(word in title.split() for word in search_string):
-            primary_counts += 1  # Increment the counter for each match
-          if any(word in title.split() for word in specific_words):
-            secondary_counts += 1
-
-
-
-        selected_papers_content = ""
-        for idx, paper in enumerate(selected_papers, start=1):
-         title = paper.get("title", "").replace("_", r"\_")
-         paper_type = paper.get("type", "").replace("_", r"\_")
-         creator = paper.get("creator", "").replace("_", r"\_")
-         year = paper.get("year", "").replace("_", r"\_")
-
-         selected_papers_content += (
-           f"{idx} & {title} & {year} & {paper_type} & {creator} \\\\ \\hline\n"
-         )
-
-
-
-        answers_content = ""
-        for answer_obj in answers:
-            answer = answer_obj.get("answer", "")
-            source = answer_obj.get("source", "")
-            prefix = "Elsevier" if source.lower() == "elsevier" else "ArXiv" if source.lower() == "arxiv" else "Answer"
-            answers_content += f"\\textbf{{{prefix}}}: {answer} \\\\ \\newline\n"
-
-
-
-        purpose_and_questions_content = ""
-        for idx, item in enumerate(purpose_and_questions, start=1):
-         purpose = item.get("purpose", "").replace("_", r"\_").replace("&", r"\&")
-         question = item.get("question", "").replace("_", r"\_").replace("&", r"\&")
-
-        #  purpose_and_questions_content += (
-        #  f"{purpose} & {question} \\\\ \hline\n"
-        #  )
-         purpose_and_questions_content += (
-          f"{purpose} & {question} \\\\ \\hline\n"
-         )
-
-
-        # Assuming you have a LaTeX template named 'latex_template.tex' in the 'templates' folder
-        print("inside")
-        latex_content = render_template(
-            "latex_template.tex",
-            objective = objective,
-            purpose_and_questions_content = purpose_and_questions_content,
-            primary_counts = primary_counts,
-            secondary_counts = secondary_counts,
-            selected_papers_content = selected_papers_content,
-            answers = answers_content,
-            abstract = abstract_summary,
-            introduction = intro_summary,
-            conclusion = conclusion_summary,
-        )
-
-        # Debugging: Print the generated LaTeX content to the console
-        # Debugging: Print the generated LaTeX content to the console
-        # print("LaTeX Content:", flush=True)
-        # print(latex_content, flush=True)
-
-
-
-
-        # Save the LaTeX content to a file in the same directory as this script
-        current_time = datetime.now().strftime('%Y%m%d%H%M%S')
-        milliseconds = datetime.now().microsecond // 1000
-        file_path = os.path.join(os.path.dirname(__file__), f"{current_time}_{milliseconds}summary.tex")
-        print(file_path)
-        with open(file_path, "w", encoding="utf-8") as file:
-            file.write(latex_content)
-        with tempfile.NamedTemporaryFile(mode='w+', suffix='.tex', delete=False, encoding='utf-8') as temp_file:
-            temp_file.write(latex_content)
-            temp_file_path = temp_file.name
-        return send_file(temp_file_path, as_attachment=True, download_name='paper_summary.tex')
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/search_papers', methods=['POST', "GET"])
 def search_papers():
@@ -958,6 +758,7 @@ def search_papers():
 
     elsevier_results = []
     semantic_results = []
+    arxiv_results = []
 
     if not search_string or not start_year:
         return jsonify({'error': 'Search string and start year are required.'}), 400
@@ -970,12 +771,14 @@ def search_papers():
         elsevier_results = search_elsevier(search_string, start_year, end_year, limit, is_english, is_peer_reviewed, keywords, is_cited)
     if "Semantic Scholar" in selected_data_sources:
         semantic_results = search_semantic_scholar(search_string, start_year, end_year, limit, is_english, is_peer_reviewed, keywords)
-    # arxiv_results = search_arxiv(search_string, start_year, end_year, limit)
+    if "arXiv" in selected_data_sources:
+        arxiv_results = search_arxiv(search_string, start_year, end_year, limit)
     # ieee_xplore_results = search_ieee_xplore(search_string, start_year, end_year, limit)
-
-    combined_results = [elsevier_results]
     
-    print(F"ID: {project_id} - search_string {search_string}")
+    print(f"elsevier_results: {len(elsevier_results)}")
+    print(f"arxiv_results: {len(arxiv_results)}")
+
+    combined_results = [elsevier_results, arxiv_results]
     
     # ✅ Save search string and strategy
     if project_id:
@@ -991,19 +794,53 @@ def search_papers():
 
     return jsonify(combined_results)
 
-@app.route("/api/rag_chat", methods=["POST"])
-def rag_chat():
-    data = request.json
-    project_id = data.get("project_id")
-    query = data.get("query")
 
-    if not project_id or not query:
-        return jsonify({"error": "project_id and query are required"}), 400
+@app.route("/api/deep_research", methods=["POST"])
+def deep_research():
+    try:
+        data = request.get_json(force=True)
+        objective = data.get("objective","").strip()
+        questions = data.get("research_questions", [])
+        search_string = data.get("search_string","").strip()
+        criteria = data.get("criteria", {})
 
-    result = query_rag_system(project_id, query)
-    return jsonify(result)
+        if not objective or not questions:
+            return jsonify({"error":"objective and research_questions are required"}), 400
+
+        # Prefer MCP if configured, else fallback
+        try:
+            result = run_deepresearch_fallback(objective, questions, search_string, criteria)
+            print(result)
+        except Exception as ex:
+            # If MCP not available, auto fallback
+            result = run_deepresearch_fallback(objective, questions, search_string, criteria)
+            print(result)
+
+        # Optional: persist in Mongo under the project
+        project_id = data.get("project_id")
+        if project_id:
+            projects_collection.update_one(
+                {"_id": ObjectId(project_id)},
+                {"$set": {
+                    "deep_research": {
+                        #"ran_at": time.time(),
+                        "objective": objective,
+                        "questions": questions,
+                        "search_string": search_string,
+                        "criteria": criteria,
+                        "report": result.get("report",""),
+                        "sources": result.get("sources", []),
+                        "subquestions": result.get("subquestions", [])
+                    }
+                }},
+                upsert=False
+            )
+
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # Running app
 if __name__ == '__main__':
-    socketio.run(app, debug=True)
+    socketio.run(app,host='0.0.0.0', port=50005, debug=True,allow_unsafe_werkzeug=True)
