@@ -12,10 +12,9 @@ import faiss
 import numpy as np
 from typing import List, Dict, Any, Tuple
 
-openai_key = os.getenv("API-KEY")
-api_key = openai_key
+api_key = os.environ("API-KEY")
 
-client = OpenAI(api_key="REDACTED")
+client = OpenAI(api_key=api_key)
 
 
 # Models (you can change these)
@@ -434,102 +433,6 @@ def generate_introduction_summary_with_openai(prompt, model):
     else:
         raise Exception("Failed to generate the introduction summary from OpenAI.")
 
-# def generate_research_report(project_id, research_questions, model="gpt-4"):
-#     """Generates a research report using OpenAI based on extracted abstracts and research questions."""
-    
-#     project_path = os.path.join("data", project_id)
-
-#     if not os.path.exists(project_path):
-#         return {"error": "No extracted data found for this project"}
-
-#     # Load all abstracts from CSV files
-#     all_abstracts = []
-#     csv_files = [os.path.join(project_path, f) for f in os.listdir(project_path) if f.endswith(".csv")]
-
-#     if not csv_files:
-#         return {"error": "No CSV files found"}
-
-#     for csv_file in csv_files:
-#         df = pd.read_csv(csv_file)
-#         if "Abstract" in df.columns:
-#             all_abstracts.extend(df["Abstract"].dropna().tolist())
-
-#     if not all_abstracts:
-#         return {"error": "No abstracts found in CSV files"}
-
-#     # Prepare OpenAI API request
-#     abstracts_text = "\n\n".join(all_abstracts)
-#     questions_text = "\n".join([f"- {q}" for q in research_questions])
-
-#     prompt_text = f"""
-#     You are an expert in conducting systematic literature reviews (SLRs). Based on the following collection of paper abstracts, generate a well-structured academic report.
-
-#     ### Research Context:
-#     - These abstracts are from peer-reviewed research papers related to a common topic.
-
-#     ### Research Questions:
-#     {questions_text}
-
-#     ### Paper Abstracts:
-#     {abstracts_text}
-
-#     ---
-
-#     ### TASK:
-
-#     Generate a detailed, structured SLR report using the following format:
-
-#     1. **Introduction**
-#     - Briefly introduce the topic and its relevance.
-#     - Mention the motivation for conducting this review.
-
-#     2. **Research Objectives**
-#     - State the goals of this SLR based on the provided research questions.
-
-#     3. **Summary of Literature**
-#     - Summarize trends, common themes, and key findings from the abstracts.
-#     - Mention important techniques, datasets, or insights observed.
-
-#     4. **Discussion**
-#     - Discuss any notable gaps, contradictions, or opportunities identified.
-#     - Compare methods or results if mentioned.
-
-#     5. **Answers to Research Questions**
-#     - Provide clear, concise answers to each question, labeled as RQ1, RQ2, etc.
-
-#     6. **Conclusion**
-#     - Summarize the insights gained.
-#     - Suggest future directions or remaining challenges.
-
-#     Ensure that your output is academically styled, uses clear headings, and remains concise but comprehensive. Avoid quoting entire abstracts. Instead, synthesize the content to demonstrate insight.
-#     """
-
-#     headers = {
-#         "Authorization": f"Bearer {api_key}",
-#         "Content-Type": "application/json"
-#     }
-
-#     data = {
-#         "model": model,
-#         "messages": [
-#             {"role": "system", "content": "You are an AI research assistant, helping with systematic literature reviews."},
-#             {"role": "user", "content": prompt_text}
-#         ],
-#         "temperature": 0.7
-#     }
-
-#     try:
-#         response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, data=json.dumps(data))
-
-#         if response.status_code == 200:
-#             result = response.json()
-#             ai_report = result["choices"][0]["message"]["content"].strip()
-#             return {"message": "AI-generated research report created successfully!", "report": ai_report}
-#         else:
-#             return {"error": f"OpenAI API error: {response.status_code}", "details": response.text}
-
-#     except Exception as e:
-#         return {"error": f"Unexpected error: {str(e)}"}
 
 def generate_research_report(project_id, research_questions, objective, model):
     """
